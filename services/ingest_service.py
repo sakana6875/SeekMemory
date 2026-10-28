@@ -24,6 +24,7 @@ try:
     from ..maintain.impression import revise_impression
     from ..maintain.link import link_new
     from ..perceive.absorb import ExtractionPlan, build_plan, dialogue_of, recover_parents, worth_now
+    from ..core.relationship_rules import VERIFIER_VERSION, relationship_event_id
     from ..perceive.extract import build_prompt
     from ..perceive.importance import (
         MIN_IMPORTANCE_SCORE,
@@ -48,6 +49,7 @@ except ImportError:
     from maintain.impression import revise_impression
     from maintain.link import link_new
     from perceive.absorb import ExtractionPlan, build_plan, dialogue_of, recover_parents, worth_now
+    from core.relationship_rules import VERIFIER_VERSION, relationship_event_id
     from perceive.extract import build_prompt
     from perceive.importance import (
         MIN_IMPORTANCE_SCORE,
@@ -75,6 +77,8 @@ class IngestService:
         config: Callable[[str, Any], Any],
         provider_for: Callable[[str | None], Awaitable[Any]],
         owner_id: Callable[[], str],
+        relationship_sources: SourceStore | None = None,
+        relationship_events: Any | None = None,
         logger,
     ) -> None:
         self.buffer = buffer
@@ -88,6 +92,8 @@ class IngestService:
         self.provider_for = provider_for
         self.owner_id = owner_id
         self.logger = logger
+        self.relationship_sources = relationship_sources or sources
+        self.relationship_events = relationship_events
         self.flushing = False
         self.flush_day = ""
         self.flush_count = 0
@@ -535,9 +541,12 @@ class IngestService:
             require_evidence=require_evidence,
             stage=stage,
         )
-        if plan.outcome is not None:
+        if plan.outcome is not None and plan.outcome.retryable:
             return self._with_usage(plan.outcome, usage)
-        return self._persist_plan(plan, stage, log, usage=usage)
+        persisted = self._persist_plan(plan, stage, log, usage=usage)
+        if plan.outcome is not None:
+            return self._with_usage(replace(plan.outcome, errors=persisted.errors, retryable=persisted.retryable), usage)
+        return persisted
 
     def _persist_plan(
         self,
@@ -585,6 +594,12 @@ class IngestService:
             except Exception as exc:
                 errors.append(f"impression: {exc}")
                 log(f"impression revision failed: {type(exc).__name__}")
+        try:
+            self._record_relationship_candidates(plan.relationship_candidates)
+        except Exception as exc:
+            errors.append(f"relationship: {exc}")
+            retryable = True
+            log(f"relationship candidate write failed: {type(exc).__name__}")
         return self._with_usage(
             WriteOutcome(
                 written=len(written_ids),
@@ -595,6 +610,27 @@ class IngestService:
             ),
             usage,
         )
+
+    def _record_relationship_candidates(self, candidates) -> None:
+        if not candidates or self.relationship_events is None or self.relationship_sources is None:
+            return
+        loaded = self.relationship_sources.sources_by_ids([candidate.primary_source_id for candidate in candidates])
+        for candidate in candidates:
+            source = loaded.get(candidate.primary_source_id)
+            try:
+                stamp = datetime.datetime.fromisoformat(source.at) if source is not None else None
+            except (AttributeError, ValueError):
+                stamp = None
+            if source is None or source.speaker_id != candidate.subject_id or stamp is None or stamp.tzinfo is None:
+                raise ValueError("relationship source is not attributable")
+            self.relationship_events.record_pending({
+                "event_id": relationship_event_id(candidate), "verifier_version": VERIFIER_VERSION,
+                "subject_id": candidate.subject_id, "reason": candidate.reason.value,
+                "strength": candidate.strength.value, "scope": candidate.scope.value,
+                "event_at": source.at, "primary_source_id": candidate.primary_source_id,
+                "source_ids": candidate.source_ids, "origin_artifact_id": candidate.origin_artifact_id,
+                "origin_revision": candidate.origin_revision,
+            })
 
     def _supersede(self, new_art) -> int:
         """Expire an explicitly superseded old memory without deleting its Source."""

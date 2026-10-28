@@ -21,7 +21,7 @@ Family and memory level are separate dimensions:
 | media | type, title, url, with optional summary/shared_by |
 | secret | protected ref and shadow_text; excluded by the recall candidate filter |
 | designated | explicit delivery text, trigger, and given state |
-| relationship | versioned per-subject affinity, confidence, evidence count, hysteretic band, and a content-free policy snapshot; excluded from Recall |
+| relationship | versioned per-subject familiarity, trust, warmth, tension, stability, and confidence; excluded from Recall and reply gating during V2 observation |
 
 Family validators live in core/families. make constructs an object but does not validate it; production callers explicitly invoke validate before commit. revise retains ID and family, increments revision, and refreshes updated time.
 
@@ -33,8 +33,8 @@ Family validators live in core/families. make constructs an object but does not 
 - **graph.py / tree.py** use injected repository protocols for relation edges and parent/child structure. They do not issue SQL. Causal edges have an explicit API but no automatic semantic inference.
 - **capacity.py** converts a capacity snapshot and configurable thresholds into a state and scheduler actions as a pure decision; services perform the actions.
 - **trace.py** sanitizes run-trace fields and projects event timelines while restricting stored data.
-- **relationship.py / relationship_rules.py** own stable relationship IDs, snapshots, hysteresis, the ten-reason evidence rulebook, scope weights, per-cycle caps, and bounded revision plans. Models classify observations but never write affinity, delta, band, or policy version.
-- **interaction_policy.py** produces deterministic reply probability, fixed style, affection/follow-up/care/teasing permissions, and future proactive-kind permissions. Sampling is stable by immutable Source ID and fails open when the ID is absent.
+- **relationship.py / relationship_rules.py** own stable IDs, multidimensional snapshots, ten candidate reasons, evidence boundaries, decay, and replayable projection. Models propose candidates but never write dimensions, scores, or verdicts.
+- V2 observation does not use relationship state to change reply availability or tone.
 
 ## Core invariants
 

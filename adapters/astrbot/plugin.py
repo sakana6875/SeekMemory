@@ -66,11 +66,7 @@ from .hooks import AstrBotHooks
 from .runtime import AstrBotRuntimeAdapter
 from .time import AstrBotBuffer, AstrBotRunRecorder, AstrBotSourceView
 from .topics import AstrBotTopicSource
-from ..relationship_policy import (
-    RelationshipInteractionPolicy,
-    RelationshipReader,
-    settings_from_config,
-)
+from ..relationship_policy import RelationshipReader
 
 class AstrBotPlugin(star.Star):
     """Composition root and lifecycle owner for the AstrBot host.
@@ -220,15 +216,7 @@ class AstrBotPlugin(star.Star):
             action_executor=self.action_executor,
             recorder=recorder,
         )
-        self.relationship_policy = RelationshipInteractionPolicy(
-            RelationshipReader(self.cache),
-            settings_from_config(
-                self._c,
-                lambda key: logger.warning(
-                    f"[seekmemory] normalized relationship config: {key}"
-                ),
-            ),
-        )
+        self.relationship_reader = RelationshipReader(self.cache)
         if self.store is not None:
             try:
                 self.store.runtime_episodes.prune(
@@ -251,6 +239,8 @@ class AstrBotPlugin(star.Star):
             logger=logger,
             config=self._c,
             persona_model=self._persona_model,
+            relationship_events=self.store.relationship_events if self.store is not None else None,
+            provider_for=self._provider_for,
         )
         scheduler = Scheduler(runtime.store)
         capacity = CapacityService(
@@ -267,16 +257,16 @@ class AstrBotPlugin(star.Star):
         ingest = IngestService(
             buffer=self.buffer,
             artifacts=self.store.artifacts if self.store is not None else None,
-            sources=AstrBotSourceView(self.store.sources) if self.store is not None else None,
+            sources=self.store.sources if self.store is not None else None,
             extraction=self.store.extraction if self.store is not None else None,
             cache=self.cache,
             graph=self.graph,
             journal=self.journal,
             config=self._c,
-            provider_for=self.context.get_using_provider_async,
-            owner_id=lambda: (
-                self.owner_umo.split(":")[-1] if self.owner_umo else ""
-            ),
+            provider_for=self._provider_for,
+            owner_id=lambda: self.owner_id,
+            relationship_sources=self.store.sources if self.store is not None else None,
+            relationship_events=self.store.relationship_events if self.store is not None else None,
             logger=logger,
         )
         status = StatusService(

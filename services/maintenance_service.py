@@ -46,6 +46,8 @@ class MaintenanceService:
         config: Callable[[str, Any], Any] | None = None,
         persona_model: PersonaModelFactory | None = None,
         clock: Callable[[], datetime.datetime] | None = None,
+        relationship_events: Any | None = None,
+        provider_for: Callable[[str], Awaitable[Any]] | None = None,
     ) -> None:
         self.artifacts = artifacts
         self.sources = sources
@@ -56,6 +58,8 @@ class MaintenanceService:
         self._c = config or (lambda _key, default: default)
         self.persona_model = persona_model
         self.clock = clock or datetime.datetime.now
+        self.relationship_events = relationship_events
+        self.provider_for = provider_for
 
     def _relationship_mode(self) -> str:
         mode = str(self._c("relationship_mode", "observe") or "").strip().lower()
@@ -115,12 +119,11 @@ class MaintenanceService:
         today = datetime.date.today().isoformat()
         relationships = 0
         if self._relationship_mode() != "off":
+            await self._verify_relationships()
             with self.journal.span("weekly", "relationship") as metrics:
                 relationships = consolidate_relationships(
-                    self.artifacts,
-                    self.sources,
-                    self.cache,
-                    self._relationship_policy(),
+                    self.artifacts, self.sources, self.relationship_events, self.cache,
+                    self._relationship_policy(), as_of=self.clock(),
                 )
                 metrics["updated"] = relationships
         with self.journal.span("weekly", "self_impression") as metrics:
@@ -176,6 +179,29 @@ class MaintenanceService:
             "persona_result": persona_result,
             "relationships": relationships,
         }
+    async def _verify_relationships(self) -> None:
+        if self.relationship_events is None or self.provider_for is None or self.sources is None:
+            return
+        from perceive.model import ProviderChatModel
+        from perceive.relationship import verify_relationship
+        from core.relationship_rules import (
+            ConversationScope, RelationshipCandidate, RelationshipReason,
+            RelationshipStrength, VERIFIER_VERSION,
+        )
+        for row in self.relationship_events.pending(24):
+            try:
+                sources = self.sources.sources_by_ids(list(row.source_ids))
+                evidence = tuple(sources[source_id] for source_id in row.source_ids)
+                provider = ProviderChatModel(await self.provider_for(evidence[0].session_id))
+                candidate = RelationshipCandidate(
+                    row.subject_id, RelationshipReason(row.reason), RelationshipStrength(row.strength),
+                    row.primary_source_id, row.source_ids, evidence[0].session_id, ConversationScope(row.scope),
+                )
+                verdict = await verify_relationship(candidate, evidence, provider)
+                self.relationship_events.decide(row.event_id, VERIFIER_VERSION, verdict.status, verdict.repair_of)
+            except Exception:
+                self.logger.warning("[seekmemory] relationship verdict deferred")
+
 
     async def _synthesize_persona_async(self) -> dict:
         if not bool(self._c("persona_synthesis_enabled", True)):

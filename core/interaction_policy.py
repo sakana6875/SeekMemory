@@ -7,7 +7,6 @@ import math
 from dataclasses import dataclass
 from enum import Enum
 
-from .relationship import HARD_GATE_CONFIDENCE, RelationshipBand, RelationshipSnapshot
 
 INTERACTION_POLICY_VERSION = "interaction-v1"
 LOW_REPLY_CHARS = 120

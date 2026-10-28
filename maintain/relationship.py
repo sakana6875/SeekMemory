@@ -2,109 +2,46 @@
 
 from __future__ import annotations
 
-import math
+import datetime
 
 try:
     from ..app.ports import ArtifactCache, ArtifactStore, SourceStore
     from ..core.artifact import Artifact, Lineage, make, revise, validate
-    from ..core.relationship import (
-        RELATIONSHIP_POLICY_VERSION,
-        RelationshipSnapshot,
-        relationship_id,
-        snapshot_from_payload,
-        summary_for,
-    )
+    from ..core.relationship import relationship_id
     from ..core.relationship_rules import (
-        ConversationScope,
-        RelationshipObservation,
-        RelationshipReason,
-        RelationshipScoringPolicy,
-        RelationshipStrength,
-        plan_relationship_revision,
+        ConversationScope, RelationshipReason, RelationshipScoringPolicy,
+        RelationshipStrength, VerifiedRelationshipEvent, project_relationship,
     )
 except ImportError:
     from app.ports import ArtifactCache, ArtifactStore, SourceStore
     from core.artifact import Artifact, Lineage, make, revise, validate
-    from core.relationship import (
-        RELATIONSHIP_POLICY_VERSION,
-        RelationshipSnapshot,
-        relationship_id,
-        snapshot_from_payload,
-        summary_for,
-    )
+    from core.relationship import relationship_id
     from core.relationship_rules import (
-        ConversationScope,
-        RelationshipObservation,
-        RelationshipReason,
-        RelationshipScoringPolicy,
-        RelationshipStrength,
-        plan_relationship_revision,
+        ConversationScope, RelationshipReason, RelationshipScoringPolicy,
+        RelationshipStrength, VerifiedRelationshipEvent, project_relationship,
     )
+
 
 _RESERVED_SUBJECTS = {"", "self", "relation", "world"}
 
 
-def consolidate_relationships(
-    artifacts: ArtifactStore,
-    sources: SourceStore,
-    cache: ArtifactCache,
-    policy: RelationshipScoringPolicy = RelationshipScoringPolicy(),
-) -> int:
-    """Commit one bounded relationship revision per subject with fresh evidence."""
-    current = _current_relationships(cache)
-    candidates = _validated_observations(cache, sources, policy)
+def consolidate_relationships(artifacts: ArtifactStore, sources: SourceStore, events=None, cache: ArtifactCache | None = None, policy: RelationshipScoringPolicy | None = None, *, as_of: datetime.datetime | None = None) -> int:
+    """Replay verified events into one versioned V2 relationship per subject."""
+    if events is None or cache is None:
+        return 0
+    policy = policy or RelationshipScoringPolicy()
+    as_of = as_of or datetime.datetime.now(datetime.timezone.utc)
     made = 0
-    for subject_id in sorted(candidates):
-        existing = current.get(subject_id)
-        if existing is False:
-            continue
-        snapshot = (
-            snapshot_from_payload(
-                existing.payload,
-                subject_id=subject_id,
-                artifact_id=existing.header.id,
-                revision=existing.header.revision,
-            )
-            if isinstance(existing, Artifact)
-            else RelationshipSnapshot(subject_id=subject_id)
-        )
-        previously_reviewed = (
-            existing.header.lineage.derived_from
-            if isinstance(existing, Artifact)
-            else ()
-        )
-        observations = candidates[subject_id]
-        created = {
-            observation.artifact_id: artifact.header.time.created
-            for observation, artifact in observations
-        }
-        plan = plan_relationship_revision(
-            snapshot,
-            (observation for observation, _artifact in observations),
-            policy,
-            previously_reviewed_artifact_ids=previously_reviewed,
-            created_by_artifact_id=created,
-        )
-        if plan is None:
-            continue
-        replacement = _replacement(
-            existing if isinstance(existing, Artifact) else None,
-            subject_id,
-            plan,
-            policy,
-        )
-        validate(replacement)
-        artifacts.commit(
-            replacement,
-            expected_revision=existing.header.revision if isinstance(existing, Artifact) else 0,
-            op="revise" if isinstance(existing, Artifact) else "create",
-            reason="relationship evidence consolidation",
-            source_ids=plan.counted_source_ids,
-        )
-        cache.put(replacement)
-        current[subject_id] = replacement
+    subjects = events.subjects(policy.verifier_version)
+    for subject in subjects:
+        rows = [row for row in events.by_subject(subject, policy.verifier_version) if row.status == "verified"]
+        verified = [VerifiedRelationshipEvent(row.event_id, row.subject_id, RelationshipReason(row.reason), RelationshipStrength(row.strength), ConversationScope(row.scope), datetime.fromisoformat(row.event_at), row.primary_source_id, row.source_ids, row.repair_of) for row in rows]
+        snapshot = project_relationship(verified, as_of, policy)
+        artifacts.commit(art, expected_revision=0, op="create", reason="relationship-v2")
+        cache.put(art)
         made += 1
     return made
+
 
 
 def _current_relationships(cache: ArtifactCache) -> dict[str, Artifact | bool]:
@@ -186,6 +123,29 @@ def _validated_observations(
     return out
 
 
+def migrate_v1_candidates(artifacts: ArtifactStore, sources: SourceStore, events) -> int:
+    """Queue attributable V1 observations for independent V2 verification."""
+    from core.relationship_rules import RelationshipCandidate, relationship_event_id
+    queued = 0
+    for art in artifacts.list("memory"):
+        record = artifacts.inspect_record(art.header.id)
+        for version in record.get("versions", []):
+            header = version.get("header", {})
+            payload = version.get("payload", {})
+            if payload.get("relationship_policy_version") != "relationship-v1" or header.get("lineage", {}).get("derived_from"):
+                continue
+            ids = tuple(header.get("lineage", {}).get("sources", ()))
+            loaded = sources.sources_by_ids(list(ids))
+            primary = loaded.get(ids[0]) if ids else None
+            if primary is None or primary.role != "user" or not primary.at.endswith("+00:00"):
+                continue
+            candidate = RelationshipCandidate(primary.speaker_id, RelationshipReason(payload["relationship_reason"]), RelationshipStrength(payload["relationship_strength"]), primary.id, ids, primary.session_id, _scope_of(primary.session_id), art.header.id, int(version.get("revision", 0)))
+            events.record_pending({"event_id": relationship_event_id(candidate), "verifier_version": "relationship-verifier-v2", "subject_id": candidate.subject_id, "reason": candidate.reason.value, "strength": candidate.strength.value, "scope": candidate.scope.value, "event_at": primary.at, "primary_source_id": primary.id, "source_ids": ids, "origin_artifact_id": art.header.id, "origin_revision": candidate.origin_revision})
+            queued += 1
+    return queued
+
+
+
 def _replacement(
     existing: Artifact | None,
     subject_id: str,
@@ -210,21 +170,13 @@ def _replacement(
     old_derived = existing.header.lineage.derived_from if existing else ()
     lineage = Lineage(
         sources=tuple(dict.fromkeys((*old_sources, *plan.counted_source_ids))),
-        derived_from=tuple(dict.fromkeys((
-            *old_derived, *plan.reviewed_artifact_ids,
-        ))),
+        derived_from=tuple(dict.fromkeys((*old_derived, *plan.reviewed_artifact_ids))),
     )
     if existing is not None:
         return revise(existing, payload=payload, lineage=lineage)
     return make(
-        "relationship",
-        payload,
-        id=relationship_id(subject_id),
-        subject_id=subject_id,
-        scope="private",
-        said_by="inferred",
-        shareable="private_only",
-        lineage=lineage,
+        "relationship", payload, id=relationship_id(subject_id), subject_id=subject_id,
+        scope="private", said_by="inferred", shareable="private_only", lineage=lineage,
     )
 
 

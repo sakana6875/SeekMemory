@@ -3,6 +3,7 @@
 ## 0.5.0 — 2026-10-28
 
 ### 中文
+- Relationship V2 将关系候选与普通记忆分离，保留 Source 和 V1 历史，并以可回放的多维观察状态替代单一 affinity。观察期不因关系拒答或改变语气；无时区或无法归属的旧候选保持中性。新增 `relationship_events` 表，不改变既有 Artifact 表（#163）。
 
 - 修复 Source 回查的新鲜度排序：带时区时间戳与本地时间混用时，按实际经过时间计分，避免近期消息被当成旧消息；无时区时间按本地时间解释，不修改历史数据或配置。
 - 修复印象合并的部分提交和成功误报：强化或改写旧印象与退役新印象通过同一事务提交，成功后再更新缓存；写入失败和版本冲突由服务层记录。两条变更统一按 merge 审计，沿用现有数据库格式（#138）。
@@ -14,6 +15,7 @@
 
 ### English
 
+- Relationship V2 separates behavior candidates from ordinary memories, preserves Source and V1 history, and replaces single-value affinity with a replayable multidimensional observation. Observation mode neither blocks replies nor changes tone; unzoned or unattributable legacy candidates stay neutral. Adds `relationship_events` without changing existing Artifact tables (#163).
 - Fix Source recall recency ranking when offset-aware timestamps are mixed with local time: score actual elapsed time instead of treating recent messages as old. Naive timestamps use local time; stored data and configuration are unchanged.
 - Fix partial commits and false success in impression consolidation: updating the existing impression and retiring the incoming one share a transaction, with cache updates after commit. Write failures and revision conflicts reach service-layer error handling. Both changes are audited as merge operations using the existing database format (#138).
 - Add a default-closed pure proactive policy for due times, quiet windows, cooldown, retry, ignored-streak backoff and maximum attempts. Its bounded selector dispatches the oldest eligible sessions first and leaves the rest pending.

@@ -1,0 +1,2 @@
+{"id":"quoted-insult","text":"有人对我说“你真蠢”","expected":"abstain"}
+{"id":"direct-insult","text":"鱼，你真蠢","expected":"verified"}

@@ -1,18 +1,15 @@
 """Pure, versioned rules for relationship evidence consolidation."""
 
 from __future__ import annotations
+import hashlib
+from datetime import datetime
 
 import math
 from dataclasses import dataclass
 from enum import Enum
 from typing import Iterable, Mapping
 
-from .relationship import (
-    RELATIONSHIP_POLICY_VERSION,
-    RelationshipBand,
-    RelationshipSnapshot,
-    band_for,
-)
+from .relationship import RELATIONSHIP_POLICY_VERSION, RelationshipSnapshot
 
 
 class RelationshipSignal(str, Enum):
@@ -88,6 +85,90 @@ EVIDENCE_RULES: dict[RelationshipReason, EvidenceRule] = {
 }
 
 @dataclass(frozen=True)
+class RelationshipCandidate:
+    subject_id: str
+    reason: RelationshipReason
+    strength: RelationshipStrength
+    primary_source_id: str
+    source_ids: tuple[str, ...]
+    session_id: str
+    scope: ConversationScope
+    origin_artifact_id: str = ""
+    origin_revision: int = 0
+
+
+
+VERIFIER_VERSION = "relationship-verifier-v2"
+
+
+def relationship_event_id(candidate: RelationshipCandidate) -> str:
+    raw = "\x1f".join((
+        "relationship-v2", candidate.subject_id, candidate.reason.value,
+        candidate.strength.value, *sorted(candidate.source_ids),
+    ))
+    return "re_" + hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+@dataclass(frozen=True)
+class VerifiedRelationshipEvent:
+    event_id: str
+    subject_id: str
+    reason: RelationshipReason
+    strength: RelationshipStrength
+    scope: ConversationScope
+    event_at: datetime
+    primary_source_id: str
+    source_ids: tuple[str, ...]
+    repair_of: str = ""
+
+
+def project_relationship(events: Iterable[VerifiedRelationshipEvent], as_of: datetime, policy: RelationshipScoringPolicy) -> RelationshipSnapshot:
+    """Replay verified events at an explicit timezone-aware clock."""
+    if as_of.tzinfo is None:
+        raise ValueError("relationship projection requires a timezone")
+    chosen = sorted((event for event in events if event.event_at <= as_of), key=lambda event: (event.event_at, event.event_id))
+    by_primary: dict[str, list[VerifiedRelationshipEvent]] = {}
+    for event in chosen:
+        by_primary.setdefault(event.primary_source_id, []).append(event)
+    accepted = [rows[0] for rows in by_primary.values() if len({row.reason for row in rows}) == 1]
+    accepted.sort(key=lambda event: (event.event_at, event.event_id))
+    if not accepted:
+        return RelationshipSnapshot(evaluated_at=as_of.date().isoformat())
+    weights = {ConversationScope.PRIVATE: policy.private_weight, ConversationScope.GROUP: policy.group_weight, ConversationScope.UNKNOWN: policy.unknown_weight}
+    warmth_reasons = {RelationshipReason.FRIENDLY_GREETING, RelationshipReason.GRATITUDE, RelationshipReason.CARE, RelationshipReason.SUPPORT, RelationshipReason.REPAIR}
+    total = 0.0
+    for event in accepted:
+        if event.reason not in warmth_reasons:
+            continue
+        age = max(0, (as_of.date() - event.event_at.date()).days)
+        strength = 1 if event.strength == RelationshipStrength.MILD else 2
+        total += strength * weights[event.scope] * 2 ** (-age / policy.warmth_half_life_days)
+    warmth = max(-1.0, min(1.0, math.tanh(policy.learning_rate * total)))
+    trust_positive = {RelationshipReason.RESPECT, RelationshipReason.SUPPORT, RelationshipReason.REPAIR}
+    trust_negative = {RelationshipReason.DISRESPECT, RelationshipReason.INSULT, RelationshipReason.THREAT, RelationshipReason.HARASSMENT}
+    trust_total = 0.0
+    tension_total = 0.0
+    for event in accepted:
+        age = max(0, (as_of.date() - event.event_at.date()).days)
+        strength = 1 if event.strength == RelationshipStrength.MILD else 2
+        base = strength * weights[event.scope]
+        if event.reason in trust_positive:
+            trust_total += base * 2 ** (-age / policy.trust_half_life_days)
+        if event.reason in trust_negative:
+            trust_total -= base * 2 ** (-age / policy.trust_half_life_days)
+            if age <= policy.tension_half_life_days:
+                tension_total += base
+    return RelationshipSnapshot(
+        accepted[-1].subject_id, warmth=round(warmth, 6),
+        trust=round(max(-1.0, min(1.0, math.tanh(policy.learning_rate * trust_total))), 6),
+        tension=round(max(0.0, min(1.0, 1 - math.exp(-policy.learning_rate * tension_total))), 6),
+        evidence_count=len(accepted), last_evidence_at=accepted[-1].event_at.isoformat(),
+        evaluated_at=as_of.date().isoformat(),
+    )
+
+
+
+@dataclass(frozen=True)
 class RelationshipObservation:
     artifact_id: str
     subject_id: str
@@ -101,29 +182,34 @@ class RelationshipObservation:
 @dataclass(frozen=True)
 class RelationshipScoringPolicy:
     version: str = RELATIONSHIP_POLICY_VERSION
+    verifier_version: str = VERIFIER_VERSION
     learning_rate: float = 0.25
-    max_revision_delta: float = 0.10
-    minimum_evidence_confidence: float = 0.60
     private_weight: float = 1.0
     group_weight: float = 0.5
     unknown_weight: float = 0.5
+    familiarity_half_life_days: float = 180
+    trust_half_life_days: float = 180
+    warmth_half_life_days: float = 45
+    tension_half_life_days: float = 14
+    stability_half_life_days: float = 90
+    confidence_half_life_days: float = 90
+    negative_cooldown_hours: float = 24
 
     def __post_init__(self) -> None:
         if not isinstance(self.version, str) or not self.version.strip():
             raise ValueError("relationship policy version is required")
         for name in (
-            "learning_rate",
-            "max_revision_delta",
-            "minimum_evidence_confidence",
-            "private_weight",
-            "group_weight",
-            "unknown_weight",
+            "learning_rate", "private_weight", "group_weight", "unknown_weight",
+            "familiarity_half_life_days", "trust_half_life_days", "warmth_half_life_days",
+            "tension_half_life_days", "stability_half_life_days", "confidence_half_life_days",
+            "negative_cooldown_hours",
         ):
             value = getattr(self, name)
-            if isinstance(value, bool) or not isinstance(value, (int, float)):
-                raise ValueError(f"{name} must be numeric")
-            if not math.isfinite(float(value)) or not 0.0 <= float(value) <= 1.0:
-                raise ValueError(f"{name} must be within [0, 1]")
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)) or float(value) < 0:
+                raise ValueError(f"{name} must be a non-negative number")
+            if name.endswith("weight") or name == "learning_rate":
+                if not 0.0 <= float(value) <= 1.0:
+                    raise ValueError(f"{name} must be within [0, 1]")
 
 
 @dataclass(frozen=True)

@@ -15,6 +15,7 @@ try:
     from .runtime_episodes import RuntimeEpisodeRepository
     from .runtime_state import RuntimeStateRepository
     from .sources import SourceRepository
+    from .relationship_events import RelationshipEventRepository
     from .sqlite import SqliteDatabase
 except ImportError:  # standalone imports from the store directory
     from artifacts import ArtifactRepository
@@ -25,6 +26,7 @@ except ImportError:  # standalone imports from the store directory
     from runtime_episodes import RuntimeEpisodeRepository
     from runtime_state import RuntimeStateRepository
     from sources import SourceRepository
+    from relationship_events import RelationshipEventRepository
     from sqlite import SqliteDatabase
 
 
@@ -42,6 +44,7 @@ class Store:
         self.runtime_episodes = RuntimeEpisodeRepository(self.database)
         self.dreams = DreamRepository(self.database)
         self.metrics = StoreMetricsRepository(self.database, self.extraction)
+        self.relationship_events = RelationshipEventRepository(self.database)
 
     @property
     def conn(self):

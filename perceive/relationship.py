@@ -2,20 +2,22 @@
 
 from __future__ import annotations
 
+import json
+from dataclasses import dataclass
 from typing import Any, Mapping
 
 try:
+    from ..app.contracts import ChatRequest
     from ..core.relationship_rules import (
-        EVIDENCE_RULES,
-        RelationshipReason,
-        RelationshipStrength,
+        EVIDENCE_RULES, RelationshipCandidate, RelationshipReason, RelationshipStrength,
     )
+    from ..core.source import Source
 except ImportError:
+    from app.contracts import ChatRequest
     from core.relationship_rules import (
-        EVIDENCE_RULES,
-        RelationshipReason,
-        RelationshipStrength,
+        EVIDENCE_RULES, RelationshipCandidate, RelationshipReason, RelationshipStrength,
     )
+    from core.source import Source
 
 SEPARATOR = "\x1d"
 
@@ -27,6 +29,7 @@ def reason_of(payload: Mapping[str, Any] | None) -> RelationshipReason | None:
         return RelationshipReason(str(payload.get("relationship_reason") or "").strip())
     except ValueError:
         return None
+
 
 
 def signal_of(payload: Mapping[str, Any] | None) -> str:
@@ -69,3 +72,29 @@ def observation_boundary(
     reason = reason_of(payload)
     evidence = "|".join(str(value) for value in evidence_ids if str(value))
     return f"{boundary}{SEPARATOR}{reason.value if reason else ''}{SEPARATOR}{evidence}"
+
+
+@dataclass(frozen=True)
+class RelationshipVerdict:
+    status: str
+    repair_of: str = ""
+
+
+async def verify_relationship(candidate: RelationshipCandidate, evidence: tuple[Source, ...], model, prior_negative: tuple = ()) -> RelationshipVerdict:
+    """Cross-check one candidate without approving identity or scores."""
+    lines = [f"{source.id} {source.role}: {source.text}" for source in evidence]
+    priors = [f"{item.event_id}: {item.reason}" for item in prior_negative[:3]]
+    response = await model.complete(ChatRequest(
+        session_id=candidate.session_id, system_prompt=(
+            "只返回一个 JSON 对象，字段 reason,source_ids,target,decision,repair_of,stop_source_id。"
+            "decision 只能是 verified 或 abstain；target 只能是 assistant、other 或 unknown。"
+        ), prompt="\n".join((*lines, f"candidate={candidate.reason.value}", *priors)),
+    ))
+    parsed = json.loads(response.text)
+    if not isinstance(parsed, dict) or parsed.get("decision") not in ("verified", "abstain"):
+        raise ValueError("invalid relationship verdict")
+    if parsed["decision"] == "abstain":
+        return RelationshipVerdict("abstain")
+    if parsed.get("reason") != candidate.reason.value or tuple(parsed.get("source_ids") or ()) != candidate.source_ids or parsed.get("target") != "assistant":
+        return RelationshipVerdict("abstain")
+    return RelationshipVerdict("verified", str(parsed.get("repair_of") or ""))
