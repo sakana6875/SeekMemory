@@ -17,7 +17,7 @@ Topics are built within one session. A user and actual reply are paired through 
 3. parse_response_checked distinguishes a valid empty array from an empty response or invalid JSON. Invalid responses remain retryable; they are not treated as “nothing to remember.”
 4. build_plan validates evidence IDs, resolves subject_id, scope, event time, and strength, deduplicates within a subject/scope boundary, and validates the Artifact family payload.
 5. For same-session multi-topic batches, every item must cite evidence from its own single topic in that batch. A behavior memory also needs a valid pair consisting of an assistant Source and its actual user parent.
-6. ExtractionPlan returns candidate Artifacts and skip/error information. IngestService performs CAS commits, updates Cache, revises duplicate impressions, and creates similarity/time relations.
+6. ExtractionPlan returns ordinary Artifacts separately from ten relationship candidate types. Candidates require exact user Source evidence within one speaker/topic boundary and never become ordinary memories. IngestService queues them idempotently with Source time and subject in `relationship_events`. Weekly independent ChatModel verification decides verified/abstain; model failures stay pending, and quoted, third-party, and unsupported repair cases are evaluated as false-positive risks. Ordinary Artifacts still follow CAS commit, Cache, and edge linking.
 
 ## Dream triage and recovery
 

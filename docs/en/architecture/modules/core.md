@@ -33,8 +33,8 @@ Family validators live in core/families. make constructs an object but does not 
 - **graph.py / tree.py** use injected repository protocols for relation edges and parent/child structure. They do not issue SQL. Causal edges have an explicit API but no automatic semantic inference.
 - **capacity.py** converts a capacity snapshot and configurable thresholds into a state and scheduler actions as a pure decision; services perform the actions.
 - **trace.py** sanitizes run-trace fields and projects event timelines while restricting stored data.
-- **relationship.py / relationship_rules.py** own stable IDs, multidimensional snapshots, ten candidate reasons, evidence boundaries, decay, and replayable projection. Models propose candidates but never write dimensions, scores, or verdicts.
-- V2 observation does not use relationship state to change reply availability or tone.
+- **relationship.py / relationship_rules.py** own stable IDs, ten candidate reasons, and multidimensional snapshots. Replay consumes only same-subject, timezone-aware, independently verified Source events: private weight 1.0, group weight 0.5, mild/strong factors 1/2, learning rate 0.25. Familiarity decays over 180 days, confidence and repeated-evidence stability over 90; warmth and trust use 45/180-day half-lives and `tanh` bounds. Tension cools with a 14-day half-life after 24 hours; only a repair linked to an earlier verified negative can reduce its tension, capped at 75% without repeated subtraction. Sources are counted once; models propose candidates and semantic verdicts, not dimensions or scores.
+- V2 has no single favorability score. Even with legacy `enforce` config, relationship observation cannot change replies or tone; the Runtime gate stays independent.
 
 ## Core invariants
 

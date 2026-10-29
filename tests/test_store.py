@@ -7,19 +7,29 @@
 from __future__ import annotations
 
 import io
+import asyncio
+import json
+import datetime
 import os
 import shutil
 import sys
 import tempfile
 import unittest
 
+from contextlib import contextmanager, nullcontext
+from types import SimpleNamespace
 from contextlib import redirect_stdout
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.artifact import Artifact, make, revise
+from core.relationship import relationship_id
+from core.relationship_rules import RelationshipCandidate, RelationshipReason, RelationshipStrength, ConversationScope, VERIFIER_VERSION, relationship_event_id
 from core.source import Source
 from store.cache import Cache
 from store import Store, open_store
+from adapters.relationship_policy import RelationshipReader
+from maintain.relationship import consolidate_relationships, migrate_v1_candidates
+from services.maintenance_service import MaintenanceService
 from scripts.deactivate_relationships import main as deactivate_relationships_main
 from store.ledger import chain_hash, chain_payload
 from store.ledger import Ledger
@@ -355,6 +365,238 @@ class CacheTest(_StoreCase):
         self.assertIsNone(self.cache.get(stray.header.id))
         self.assertEqual(self.cache.size(), 2)
 
+
+class RelationshipV2PersistenceTest(_StoreCase):
+    """Verified evidence projects into versioned heads without losing history."""
+
+    def _source(self, source_id: str, text: str, *, session: str = "bot:FriendMessage:u1") -> Source:
+        source = Source(source_id, source_id, session, "u1", "user", text,
+                        "2026-10-26T12:00:00+00:00")
+        self.db.sources.append_sources([source])
+        return source
+
+    def _verified(self, source: Source, reason: RelationshipReason) -> None:
+        candidate = RelationshipCandidate(
+            source.speaker_id, reason, RelationshipStrength.STRONG, source.id,
+            (source.id,), source.session_id, ConversationScope.PRIVATE,
+        )
+        event_id = relationship_event_id(candidate)
+        self.db.relationship_events.record_pending({
+            "event_id": event_id, "verifier_version": VERIFIER_VERSION,
+            "subject_id": source.speaker_id, "reason": reason.value,
+            "strength": candidate.strength.value, "scope": candidate.scope.value,
+            "event_at": source.at, "primary_source_id": source.id,
+            "source_ids": (source.id,),
+        })
+        self.db.relationship_events.decide(event_id, VERIFIER_VERSION, "verified")
+
+    def test_verified_event_commits_readable_versions_and_evidence(self) -> None:
+        source = self._source("positive", "鱼，谢谢你帮我解决了问题")
+        self._verified(source, RelationshipReason.GRATITUDE)
+        first = datetime.datetime(2026, 10, 26, 12, tzinfo=datetime.timezone.utc)
+        self.assertEqual(consolidate_relationships(
+            self.db.artifacts, self.db.sources, self.db.relationship_events, self.cache, as_of=first,
+        ), 1)
+        first_snapshot = RelationshipReader(self.cache).get("u1")
+        self.assertGreater(first_snapshot.warmth, 0)
+        self.assertGreater(first_snapshot.familiarity, 0)
+        self.assertEqual(first_snapshot.revision, 1)
+        self.assertEqual(RelationshipReader(self.cache).get("other").evidence_count, 0)
+        self.assertEqual(consolidate_relationships(
+            self.db.artifacts, self.db.sources, self.db.relationship_events, self.cache, as_of=first,
+        ), 0)
+        later = first + datetime.timedelta(days=45)
+        self.assertEqual(consolidate_relationships(
+            self.db.artifacts, self.db.sources, self.db.relationship_events, self.cache, as_of=later,
+        ), 1)
+        self.assertLess(RelationshipReader(self.cache).get("u1").warmth, first_snapshot.warmth)
+        self.assertEqual([row["revision"] for row in self.db.artifacts.history(relationship_id("u1"))], [1, 2])
+        record = self.db.artifacts.inspect_record(relationship_id("u1"))
+        self.assertEqual({row["id"] for row in record["sources"]}, {source.id})
+        self.assertTrue(self.db.ledger.verify())
+
+    def test_migration_queues_historical_v1_without_copying_affinity(self) -> None:
+        source = self._source("legacy", "鱼，你帮我太多了，谢谢你")
+        memory = make(
+            "memory", {"text": "对鱼表达感谢", "level": "scene", "about": "relation",
+                       "relationship_policy_version": "relationship-v1",
+                       "relationship_reason": "gratitude", "relationship_strength": "mild"},
+            subject_id="u1", lineage={"sources": (source.id,)},
+        )
+        self.db.artifacts.commit(memory, expected_revision=0, op="create", source_ids=(source.id,))
+        newer = revise(memory, payload={"text": "保留的普通记忆", "level": "scene"})
+        self.db.artifacts.commit(newer, expected_revision=1, op="revise", source_ids=(source.id,))
+        self.assertEqual(migrate_v1_candidates(self.db.artifacts, self.db.sources, self.db.relationship_events), 1)
+        self.assertEqual(migrate_v1_candidates(self.db.artifacts, self.db.sources, self.db.relationship_events), 0)
+        event, = self.db.relationship_events.pending(10)
+        self.assertEqual(event.origin_revision, 1)
+        self.assertEqual(consolidate_relationships(
+            self.db.artifacts, self.db.sources, self.db.relationship_events, self.cache,
+        ), 0)  # Pending evidence cannot affect a relationship.
+        self.db.relationship_events.decide(event.event_id, VERIFIER_VERSION, "verified")
+        as_of = datetime.datetime(2026, 10, 26, 12, tzinfo=datetime.timezone.utc)
+        self.assertEqual(consolidate_relationships(
+            self.db.artifacts, self.db.sources, self.db.relationship_events, self.cache, as_of=as_of,
+        ), 1)
+        relation = self.db.artifacts.get(relationship_id("u1"))
+        self.assertEqual(relation.header.lineage.derived_from, (memory.header.id,))
+        self.assertEqual([row["revision"] for row in self.db.artifacts.history(memory.header.id)], [1, 2])
+
+    def test_migration_does_not_infer_unzoned_or_missing_source_identity(self) -> None:
+        naive = Source("naive", "naive", "bot:FriendMessage:u1", "u1", "user",
+                       "鱼，早上好", "2026-10-26T12:00:00")
+        self.db.sources.append_sources([naive])
+        payload = {"text": "早上问候鱼", "level": "scene", "about": "relation",
+                   "relationship_policy_version": "relationship-v1",
+                   "relationship_reason": "friendly_greeting", "relationship_strength": "mild"}
+        for source_id in (naive.id, "missing"):
+            memory = make("memory", payload, subject_id="u1", lineage={"sources": (source_id,)})
+            self.db.artifacts.commit(memory, expected_revision=0, op="create")
+        self.assertEqual(migrate_v1_candidates(self.db.artifacts, self.db.sources, self.db.relationship_events), 0)
+        self.assertEqual(self.db.relationship_events.pending(10), ())
+        self.assertEqual(self.db.artifacts.count("memory"), 2)
+
+    def test_v1_relation_and_deactivation_stay_versioned_and_neutral(self) -> None:
+        source = self._source("v1", "鱼，你真蠢")
+        legacy = make(
+            "relationship", {"summary": "关系状态：冷淡", "affinity": -0.7,
+                             "confidence": 0.9, "evidence_count": 1, "relation_band": "low",
+                             "policy": {"version": "relationship-v1"}},
+            id=relationship_id("u1"), subject_id="u1",
+            lineage={"sources": (source.id,)},
+        )
+        self.db.artifacts.commit(legacy, expected_revision=0, op="create", source_ids=(source.id,))
+        self.cache.put(legacy)
+        self.assertEqual(RelationshipReader(self.cache).get("u1").trust, 0)
+        self._verified(source, RelationshipReason.INSULT)
+        at = datetime.datetime(2026, 10, 26, 12, tzinfo=datetime.timezone.utc)
+        self.assertEqual(consolidate_relationships(
+            self.db.artifacts, self.db.sources, self.db.relationship_events, self.cache, as_of=at,
+        ), 1)
+        self.assertLess(RelationshipReader(self.cache).get("u1").trust, 0)
+        self.assertEqual([row["revision"] for row in self.db.artifacts.history(legacy.header.id)], [1, 2])
+        deactivated = revise(self.db.artifacts.get(legacy.header.id), state="forgotten")
+        self.db.artifacts.commit(deactivated, expected_revision=2, op="forget")
+        self.cache.put(deactivated)
+        self.assertEqual(consolidate_relationships(
+            self.db.artifacts, self.db.sources, self.db.relationship_events, self.cache,
+            as_of=at + datetime.timedelta(days=1),
+        ), 0)
+        self.assertEqual(RelationshipReader(self.cache).get("u1").evidence_count, 0)
+
+    def test_weekly_migration_retries_model_failure_then_projects_verified_evidence(self) -> None:
+        source = self._source("weekly", "鱼，谢谢你帮我理清这个问题")
+        old = make(
+            "memory", {"text": "感谢鱼", "level": "scene", "about": "relation",
+                       "relationship_policy_version": "relationship-v1",
+                       "relationship_reason": "gratitude", "relationship_strength": "mild"},
+            subject_id="u1", lineage={"sources": (source.id,)},
+        )
+        self.db.artifacts.commit(old, expected_revision=0, op="create", source_ids=(source.id,))
+        self.cache.put(old)
+
+        class Journal:
+            @contextmanager
+            def span(self, *_args, **_kwargs):
+                yield {}
+
+            def record(self, *_args, **_kwargs):
+                pass
+
+        class Provider:
+            def __init__(self):
+                self.fail = True
+
+            async def text_chat(self, **_kwargs):
+                if self.fail:
+                    raise RuntimeError("model unavailable")
+                return SimpleNamespace(completion_text=json.dumps({
+                    "reason": "gratitude", "source_ids": [source.id],
+                    "target": "assistant", "decision": "verified",
+                }))
+
+        provider = Provider()
+
+        async def provider_for(_session):
+            return provider
+
+        service = MaintenanceService(
+            artifacts=self.db.artifacts, sources=self.db.sources, cache=self.cache,
+            journal=Journal(), task_id=lambda: "weekly", logger=SimpleNamespace(info=lambda *_: None, warning=lambda *_: None),
+            clock=lambda: datetime.datetime(2026, 10, 26, 12, tzinfo=datetime.timezone.utc),
+            relationship_events=self.db.relationship_events, provider_for=provider_for,
+        )
+        self.assertEqual(asyncio.run(service.weekly())["relationships"], 0)
+        self.assertEqual(len(self.db.relationship_events.pending(10)), 1)
+        self.assertEqual(RelationshipReader(self.cache).get("u1").evidence_count, 0)
+        provider.fail = False
+        self.assertEqual(asyncio.run(service.weekly())["relationships"], 1)
+        self.assertGreater(RelationshipReader(self.cache).get("u1").warmth, 0)
+        self.assertEqual(self.db.relationship_events.pending(10), ())
+        self.assertEqual([row["revision"] for row in self.db.artifacts.history(old.header.id)], [1])
+
+
+    def test_nonstandard_legacy_relation_does_not_create_competing_head(self) -> None:
+        source = self._source("legacy-id", "鱼，你真蠢")
+        legacy = make(
+            "relationship", {"summary": "关系状态：冷淡", "affinity": -0.5,
+                             "policy": {"version": "relationship-v1"}},
+            id="legacy_relationship_u1", subject_id="u1",
+        )
+        self.db.artifacts.commit(legacy, expected_revision=0, op="create")
+        self.cache.put(legacy)
+        self._verified(source, RelationshipReason.INSULT)
+        at = datetime.datetime(2026, 10, 26, 12, tzinfo=datetime.timezone.utc)
+        self.assertEqual(consolidate_relationships(
+            self.db.artifacts, self.db.sources, self.db.relationship_events, self.cache, as_of=at,
+        ), 0)
+        self.assertIsNone(self.db.artifacts.get(relationship_id("u1")))
+        self.assertEqual(RelationshipReader(self.cache).get("u1").evidence_count, 0)
+
+    def test_weekly_repair_links_prior_verified_negative_and_lowers_tension(self) -> None:
+        insult = self._source("insult", "鱼，你真蠢")
+        self._verified(insult, RelationshipReason.INSULT)
+        start = datetime.datetime(2026, 10, 26, 12, tzinfo=datetime.timezone.utc)
+        self.assertEqual(consolidate_relationships(
+            self.db.artifacts, self.db.sources, self.db.relationship_events, self.cache, as_of=start,
+        ), 1)
+        before = RelationshipReader(self.cache).get("u1")
+        apology = Source("apology", "apology", insult.session_id, "u1", "user",
+                         "鱼，刚才辱骂你是我的错，对不起。", "2026-10-26T12:05:00+00:00")
+        self.db.sources.append_sources([apology])
+        prior = self.db.relationship_events.by_subject("u1", VERIFIER_VERSION)[0]
+        candidate = RelationshipCandidate("u1", RelationshipReason.REPAIR, RelationshipStrength.MILD,
+                                          apology.id, (apology.id,), apology.session_id, ConversationScope.PRIVATE)
+        self.db.relationship_events.record_pending({
+            "event_id": relationship_event_id(candidate), "verifier_version": VERIFIER_VERSION,
+            "subject_id": "u1", "reason": candidate.reason.value, "strength": candidate.strength.value,
+            "scope": candidate.scope.value, "event_at": apology.at,
+            "primary_source_id": apology.id, "source_ids": candidate.source_ids,
+        })
+
+        class Provider:
+            async def text_chat(self, **_kwargs):
+                return SimpleNamespace(completion_text=json.dumps({
+                    "reason": "repair", "source_ids": [apology.id], "target": "assistant",
+                    "decision": "verified", "repair_of": prior.event_id,
+                }))
+
+        async def provider_for(_session):
+            return Provider()
+
+        service = MaintenanceService(
+            artifacts=self.db.artifacts, sources=self.db.sources, cache=self.cache,
+            journal=SimpleNamespace(span=lambda *_a, **_kw: nullcontext({}), record=lambda *_a, **_kw: None),
+            task_id=lambda: "weekly", logger=SimpleNamespace(info=lambda *_: None, warning=lambda *_: None),
+            clock=lambda: start + datetime.timedelta(minutes=5),
+            relationship_events=self.db.relationship_events, provider_for=provider_for,
+        )
+        self.assertEqual(asyncio.run(service.weekly())["relationships"], 1)
+        after = RelationshipReader(self.cache).get("u1")
+        self.assertLess(after.tension, before.tension)
+        self.assertEqual(after.revision, 2)
+        decided = self.db.relationship_events.by_subject("u1", VERIFIER_VERSION)
+        self.assertEqual(next(row for row in decided if row.reason == "repair").repair_of, prior.event_id)
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

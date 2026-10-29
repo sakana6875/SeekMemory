@@ -100,7 +100,7 @@ class AstrBotPlugin(star.Star):
         self.tool_policy: ToolPolicy | None = None
         self.jobs: Jobs | None = None
         self.capacity: CapacityGovernor | None = None
-        self.relationship_policy: RelationshipInteractionPolicy | None = None
+        self.relationship_reader: RelationshipReader | None = None
         self._last_runtime_prune_at = 0.0
         self._started = False
         self._lifecycle_lock = asyncio.Lock()
@@ -133,7 +133,7 @@ class AstrBotPlugin(star.Star):
         self.buffer = None
         self.checkpoint = None
         self.dream = None
-        self.relationship_policy = None
+        self.relationship_reader = None
         self.data_path = (
             Path(str(self._c("db_path", ""))).expanduser()
             if self._c("db_path", "")
@@ -476,7 +476,7 @@ class AstrBotPlugin(star.Star):
             "services", "store", "cache", "tree", "graph", "hybrid_retriever",
             "buffer", "checkpoint", "dream", "jobs", "web", "actions",
             "episode_recorder", "action_ledger", "action_executor",
-            "tool_policy", "capacity", "run_traces", "run_tracer", "trace",
+            "tool_policy", "capacity", "relationship_reader", "run_traces", "run_tracer", "trace",
         ):
             setattr(self, name, None)
         self._self_id = ""

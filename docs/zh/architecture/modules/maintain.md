@@ -20,7 +20,7 @@ persona.py 只从已验证的 self impression 选择最多三个行为类别。�
 
 ## 关系状态巩固
 
-relationship.py 只消费原始 `relationship-v1` 观察，并先校验 confidence、不可变 Source 是否存在、user Source 是否属于 Artifact subject，以及证据是否只有一种 private/group/unknown scope。private 证据权重为 `1.0`，group/unknown 为 `0.5`。纯规则将 counted ID 与 reviewed ID 分开，按 reason 限制同轮重复，并把单次 affinity revision 限制在 `0.10`。Maintenance 通过 expected-revision CAS 提交稳定的按 subject Relationship Artifact，成功后才更新 Cache。`relationship_mode=off` 跳过巩固；默认的 `observe` 与显式 `enforce` 都会巩固并持久化派生状态。observe 模式可以计算候选交互档案，但拒绝回复仍必须同时满足 `relationship_mode=enforce` 和 `runtime_gate_enabled=true`。
+每周先将具有可归属、带时区 Source 的 V1 记忆版本排入 `relationship_events` 待复核队列（幂等、保留旧 Artifact），再对至多 24 个 pending 候选调用独立语义核验。失败保留 pending，只有 `verified` 事件参与投影。`relationship.py` 重验来源身份、会话、时区和 scope；无时区、无法归属或未知 scope 均不计分。按显式时钟重放并以 expected-revision CAS 提交稳定的按 subject V2 Artifact；版本级 Source 证据与源 V1 记忆 lineage 保留，提交成功后才更新 Cache。已停用的关系不会被重新激活；同输入和时钟不产生重复版本。`relationship_mode=off` 跳过此过程；`observe` 和旧配置值 `enforce` 当前只观察，不控制回复。
 
 ## 未接入主流程的规则
 

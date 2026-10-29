@@ -17,7 +17,7 @@ Buffer 是 Source-backed extraction queue 的内存视图。启用仓储时，�
 3. parse_response_checked 区分合法空数组与空响应/无效 JSON。失败可重试，不会被当作“没有记忆”。
 4. build_plan 校验证据 ID，确定 subject_id、scope、event time、strength 和 family payload；在 subject/scope 边界内做字面去重，并校验 Artifact。
 5. 对多话题同会话批次，模型输出必须给每条结论提供当前批次、单一话题内的证据。行为记忆还必须由实际 assistant Source 和其 user parent 组成有效配对。
-6. ExtractionPlan 返回 Artifact 列表和跳过/错误信息。IngestService 使用 CAS commit、更新 Cache、修订重复 impression，并创建相似/时间关系。
+6. ExtractionPlan 分开返回普通 Artifact 和十类关系候选；后者需精确 user Source、同一说话人及话题边界，不写普通记忆。IngestService 以 Source 原时间和 subject 将候选幂等入队 `relationship_events`；每周独立调用 ChatModel 复核 `verified/abstain`，模型错误保留 pending，并以引述、第三方和无前因修复为负例评测误报。普通 Artifact 仍通过 CAS commit、Cache 和已有连边流程处理。
 
 ## Dream triage 与恢复
 

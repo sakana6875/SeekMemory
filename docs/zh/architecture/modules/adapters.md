@@ -19,7 +19,7 @@ main.py 定义插件入口并委托 lifecycle；组合和 wiring 位于 adapters
 - AstrBotActionPort 同时提供 ActionPort 和 MessageSender：execute 接收 ActionRequest 并返回 ActionResult，既有 send 接口委托 execute 后返回布尔值。
 - ProviderChatModel 将宿主 extraction/persona provider 包装为 ChatModel。
 - SeekMemoryContextAdapter 将 Runtime 的 MemoryContextPort 接到现有 RecallService。
-- RelationshipInteractionPolicy 从 Cache 读取按 subject 唯一且已验证的 Relationship 快照，把既有 Runtime decision 与已记录 Source ID 转成无正文 InteractionGate。AstrBot hook 执行拒绝和固定语气 directive，不把关系语义放进 app/runtime。
+- RelationshipReader 只从 Cache 返回按 subject 唯一、有效的 V2 无正文快照；V1、损坏或重复记录返回中性值。关系不会向宿主 hook 提供拒答门控或语气指令，独立的 Runtime gate 仍按原配置运行。
 
 动作请求中的正文仅用于执行，不属于 ActionRecord 审计字段。不支持的动作返回 unsupported_action；空正文、缺少会话、宿主不可用、发送拒绝和执行异常分别返回固定原因码。宿主异常正文不会返回给调用方；取消继续向上传递，由运行时安排恢复。适配器只报告执行结果，不负责重试、动作审计去重或终态判定。
 
@@ -44,5 +44,4 @@ subject_key 表示稳定记忆归属，session_id 表示本轮运行会话，二
 旧服务或不支持此运行时协议的服务沿用 capture/recall。运行时写请求一旦发出，即使失败或超时，也不再补发 legacy capture，避免重复保存。普通 assistant/message 只映射为 record_reply，没有发送完成证明时不调用 record_delivery。桥接器不新增模型循环、调度器、主动发送或工具执行能力；`scripts/runtime_http.py` 是只做组合的真实 Python loopback 服务，`runtime-python-smoke.mjs` 启动它并让 DSH RuntimeBridge 驱动真实 AgentRuntime。
 
 DSH 每个宿主上下文只注册一次；卸载会撤销钩子、取消桥接请求并清空上下文缓存，迟到的响应不再注入。仓库现在还提供 `scripts/runtime_http.py` 真实 Python 本机服务入口，以及让 DSH RuntimeBridge 驱动它的 Node 集成测试。
-关系模式默认为 observe：RelationshipInteractionPolicy 可以计算无正文的候选交互档案，但默认不会注入 directive 或拒绝回复。拒绝回复必须同时满足显式 `relationship_mode=enforce` 和现有 `runtime_gate_enabled=true`；allowed/neutral 关系不会启用该 gate。仅在显式启用 enforcement 时，low/dislike 的普通私聊陈述才按 Source ID 做稳定 `0.8`/`0.5` 采样；真实问题和宿主 direct signal 仍是 required reply。相同的显式 enforcement 控制下，low/dislike 群聊 ambient 被拒绝。Relationship Artifact 不进入 Recall 或管理目录。
-关系模式默认为 observe：RelationshipInteractionPolicy 可以计算无正文的候选交互档案，但默认不会注入 directive 或拒绝回复。拒绝回复必须同时满足显式 `relationship_mode=enforce` 和现有 `runtime_gate_enabled=true`；allowed/neutral 关系不会启用该 gate。仅在显式启用 enforcement 时，low/dislike 的普通私聊陈述才按 Source ID 做稳定 `0.8`/`0.5` 采样；真实问题和宿主 direct signal 仍是 required reply。相同的显式 enforcement 控制下，low/dislike 群聊 ambient 被拒绝。Relationship Artifact 不进入 Recall 或管理目录。
+关系模式默认为 observe：`off` 跳过关系维护，`observe` 与历史配置值 `enforce` 当前都只巩固已核验事件，不改变回复可用性或风格。关系 Artifact 不进入 Recall 或管理目录；未来的表达调优需单独评审和显式启用。

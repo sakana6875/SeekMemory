@@ -112,16 +112,6 @@ class AstrBotHooks:
                 stage="assemble",
                 context={key: info[key] for key in ("mode", "picked", "chars")},
             )
-            relationship_policy = getattr(self, "relationship_policy", None)
-            style_prompt = (
-                relationship_policy.directive(
-                    AstrBotRuntimeAdapter.interaction_gate(event)
-                )
-                if relationship_policy is not None
-                else ""
-            )
-            if style_prompt:
-                req.system_prompt = (req.system_prompt or "") + style_prompt
             if block:
                 # 给记忆块加个明确的框：模型才知道这些是"自己记得的事"，
                 # 而不是散落在系统提示里的匿名文本。
@@ -189,25 +179,6 @@ class AstrBotHooks:
             AstrBotRuntimeAdapter.bind_user(event, receipt)
             self._schedule_proactive(umo)
             AstrBotRuntimeAdapter.apply_decision(event, receipt.decision)
-            relationship_policy = getattr(self, "relationship_policy", None)
-            if relationship_policy is not None:
-                gate = relationship_policy.decide(
-                    runtime_input,
-                    receipt.decision,
-                    source_id=receipt.source_id,
-                )
-                AstrBotRuntimeAdapter.bind_interaction(event, gate)
-                self.trace.record(
-                    "relationship",
-                    "enforced" if gate.enforced else "observed",
-                    {
-                        "would_allow_reply": gate.allow_reply,
-                        "would_style": gate.style.value,
-                        "policy_version": relationship_policy.version,
-                    },
-                )
-                if gate.enforced and not gate.allow_reply:
-                    self.services.runtime.clear_wait(umo)
             AstrBotRuntimeAdapter.apply_llm_gate(
                 event,
                 receipt.decision,

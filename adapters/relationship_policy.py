@@ -3,18 +3,38 @@
 from __future__ import annotations
 
 try:
-    from ..core.relationship import RelationshipSnapshot
+    from ..core.artifact import validate
+    from ..core.relationship import RelationshipSnapshot, snapshot_from_payload
     from ..app.ports import ArtifactCache
 except ImportError:
-    from core.relationship import RelationshipSnapshot
+    from core.artifact import validate
+    from core.relationship import RelationshipSnapshot, snapshot_from_payload
     from app.ports import ArtifactCache
 
 
 class RelationshipReader:
-    """Return a neutral snapshot while V2 remains observe-only."""
+    """Read a unique active V2 relationship; malformed or V1 rows are neutral."""
 
     def __init__(self, cache: ArtifactCache | None) -> None:
         self.cache = cache
 
     def get(self, subject_id: str) -> RelationshipSnapshot:
-        return RelationshipSnapshot(subject_id=str(subject_id or "").strip())
+        subject = str(subject_id or "").strip()
+        neutral = RelationshipSnapshot(subject_id=subject)
+        if not subject or self.cache is None:
+            return neutral
+        try:
+            rows = [
+                art for art in self.cache.by_subject(subject)
+                if art.header.family == "relationship" and art.header.state == "active"
+            ]
+            if len(rows) != 1:
+                return neutral
+            art = rows[0]
+            validate(art)
+            return snapshot_from_payload(
+                art.payload, subject_id=subject, artifact_id=art.header.id,
+                revision=art.header.revision,
+            )
+        except Exception:  # Corrupt relationship data must not affect ordinary replies.
+            return neutral

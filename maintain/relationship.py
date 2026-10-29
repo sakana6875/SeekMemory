@@ -1,200 +1,211 @@
-"""Dream-side relationship evidence validation and Artifact revisions."""
+"""Replay verified relationship evidence into versioned, observe-only Artifacts."""
 
 from __future__ import annotations
 
 import datetime
+import json
+from dataclasses import asdict
 
 try:
-    from ..app.ports import ArtifactCache, ArtifactStore, SourceStore
-    from ..core.artifact import Artifact, Lineage, make, revise, validate
-    from ..core.relationship import relationship_id
+    from ..app.ports import ArtifactCache, ArtifactStore, SourceStore, RelationshipEventStore
+    from ..core.artifact import Lineage, make, revise, validate
+    from ..core.relationship import RELATIONSHIP_POLICY_VERSION, SUMMARY, relationship_id
     from ..core.relationship_rules import (
-        ConversationScope, RelationshipReason, RelationshipScoringPolicy,
-        RelationshipStrength, VerifiedRelationshipEvent, project_relationship,
+        ConversationScope, RelationshipCandidate, RelationshipReason,
+        RelationshipScoringPolicy, RelationshipStrength, VERIFIER_VERSION,
+        VerifiedRelationshipEvent, project_relationship, relationship_event_id,
     )
 except ImportError:
-    from app.ports import ArtifactCache, ArtifactStore, SourceStore
-    from core.artifact import Artifact, Lineage, make, revise, validate
-    from core.relationship import relationship_id
+    from app.ports import ArtifactCache, ArtifactStore, SourceStore, RelationshipEventStore
+    from core.artifact import Lineage, make, revise, validate
+    from core.relationship import RELATIONSHIP_POLICY_VERSION, SUMMARY, relationship_id
     from core.relationship_rules import (
-        ConversationScope, RelationshipReason, RelationshipScoringPolicy,
-        RelationshipStrength, VerifiedRelationshipEvent, project_relationship,
+        ConversationScope, RelationshipCandidate, RelationshipReason,
+        RelationshipScoringPolicy, RelationshipStrength, VERIFIER_VERSION,
+        VerifiedRelationshipEvent, project_relationship, relationship_event_id,
     )
-
 
 _RESERVED_SUBJECTS = {"", "self", "relation", "world"}
 
 
-def consolidate_relationships(artifacts: ArtifactStore, sources: SourceStore, events=None, cache: ArtifactCache | None = None, policy: RelationshipScoringPolicy | None = None, *, as_of: datetime.datetime | None = None) -> int:
-    """Replay verified events into one versioned V2 relationship per subject."""
+def _scope_of(session_id: str) -> ConversationScope:
+    if ":FriendMessage:" in session_id:
+        return ConversationScope.PRIVATE
+    if ":GroupMessage:" in session_id:
+        return ConversationScope.GROUP
+    return ConversationScope.UNKNOWN
+
+
+def _event_from_row(row, sources: SourceStore) -> VerifiedRelationshipEvent | None:
+    """Reject corrupt, unzoned or unattributable rows before projection."""
+    if (row.subject_id in _RESERVED_SUBJECTS or not row.source_ids
+        or any(not isinstance(source_id, str) or not source_id for source_id in row.source_ids)
+        or len(row.source_ids) != len(set(row.source_ids))
+        or row.primary_source_id not in row.source_ids):
+        return None
+    try:
+        reason = RelationshipReason(row.reason)
+        strength = RelationshipStrength(row.strength)
+        scope = ConversationScope(row.scope)
+        when = datetime.datetime.fromisoformat(row.event_at)
+    except (TypeError, ValueError):
+        return None
+    if scope is ConversationScope.UNKNOWN or when.tzinfo is None:
+        return None
+    loaded = sources.sources_by_ids(list(row.source_ids))
+    primary = loaded.get(row.primary_source_id)
+    if primary is None or primary.role != "user" or primary.speaker_id != row.subject_id or primary.at != row.event_at:
+        return None
+    if any(
+        source is None or source.session_id != primary.session_id or _scope_of(source.session_id) is not scope
+        or (source.role == "user" and source.speaker_id != row.subject_id)
+        for source in (loaded.get(source_id) for source_id in row.source_ids)
+    ):
+        return None
+    return VerifiedRelationshipEvent(
+        row.event_id, row.subject_id, reason, strength, scope, when,
+        row.primary_source_id, row.source_ids, row.repair_of,
+    )
+
+
+def consolidate_relationships(
+    artifacts: ArtifactStore, sources: SourceStore,
+    events: RelationshipEventStore | None = None, cache: ArtifactCache | None = None,
+    policy: RelationshipScoringPolicy | None = None, *,
+    as_of: datetime.datetime | None = None,
+) -> int:
+    """Commit only changed V2 projections; retain all Source and V1 versions."""
     if events is None or cache is None:
         return 0
     policy = policy or RelationshipScoringPolicy()
     as_of = as_of or datetime.datetime.now(datetime.timezone.utc)
+    if as_of.tzinfo is None:
+        raise ValueError("relationship projection requires a timezone")
     made = 0
-    subjects = events.subjects(policy.verifier_version)
-    for subject in subjects:
-        rows = [row for row in events.by_subject(subject, policy.verifier_version) if row.status == "verified"]
-        verified = [VerifiedRelationshipEvent(row.event_id, row.subject_id, RelationshipReason(row.reason), RelationshipStrength(row.strength), ConversationScope(row.scope), datetime.fromisoformat(row.event_at), row.primary_source_id, row.source_ids, row.repair_of) for row in rows]
+    for subject in events.subjects(policy.verifier_version):
+        if subject in _RESERVED_SUBJECTS:
+            continue
+        rows = tuple(row for row in events.by_subject(subject, policy.verifier_version)
+                     if row.status == "verified")
+        validated = tuple(
+            (row, event) for row in rows
+            if (event := _event_from_row(row, sources)) is not None and event.event_at <= as_of
+        )
+        if not validated:
+            continue
+        verified = tuple(event for _, event in validated)
         snapshot = project_relationship(verified, as_of, policy)
-        artifacts.commit(art, expected_revision=0, op="create", reason="relationship-v2")
+        source_ids = tuple(dict.fromkeys(source_id for event in verified for source_id in event.source_ids))
+        origins = tuple(dict.fromkeys(
+            row.origin_artifact_id for row, _ in validated
+            if row.origin_artifact_id
+            and (origin := artifacts.get(row.origin_artifact_id)) is not None
+            and origin.header.family == "memory" and origin.header.subject_id == subject
+        ))
+        payload = {
+            "summary": SUMMARY,
+            **{key: getattr(snapshot, key) for key in (
+                "familiarity", "trust", "warmth", "tension", "stability", "confidence",
+                "evidence_count", "last_evidence_at", "evaluated_at",
+            )},
+            "policy": asdict(policy),
+        }
+        lineage = Lineage(sources=source_ids, derived_from=origins)
+        node_id = relationship_id(subject)
+        if any(row.header.family == "relationship" and row.header.id != node_id
+               for row in cache.by_subject(subject)):
+            continue  # Do not create a competing head for a legacy relationship ID.
+        existing = artifacts.get(node_id)
+        if existing is not None and (
+            existing.header.family != "relationship" or existing.header.subject_id != subject
+            or existing.header.state != "active"
+        ):
+            continue  # Do not overwrite another family, identity, or a deactivated relationship.
+        if existing is not None and existing.payload == payload and existing.header.lineage == lineage:
+            continue
+        art = (
+            revise(existing, payload=payload, lineage=lineage) if existing is not None
+            else make("relationship", payload, id=node_id, subject_id=subject,
+                      scope="private", said_by="inferred", shareable="private_only", lineage=lineage)
+        )
+        validate(art)
+        artifacts.commit(
+            art, expected_revision=existing.header.revision if existing else 0,
+            op="revise" if existing else "create", reason=RELATIONSHIP_POLICY_VERSION,
+            source_ids=source_ids,
+        )
         cache.put(art)
         made += 1
     return made
 
 
-
-def _current_relationships(cache: ArtifactCache) -> dict[str, Artifact | bool]:
-    grouped: dict[str, list[Artifact]] = {}
-    for art in cache.active("relationship"):
-        grouped.setdefault(str(art.header.subject_id or ""), []).append(art)
-    out: dict[str, Artifact | bool] = {}
-    for subject, rows in grouped.items():
-        if subject in _RESERVED_SUBJECTS or len(rows) != 1:
-            out[subject] = False
-            continue
-        art = rows[0]
-        try:
-            validate(art)
-            snapshot_from_payload(
-                art.payload,
-                subject_id=subject,
-                artifact_id=art.header.id,
-                revision=art.header.revision,
-            )
-        except ValueError:
-            out[subject] = False
-            continue
-        out[subject] = art
-    return out
-
-
-def _validated_observations(
-    cache: ArtifactCache,
-    sources: SourceStore,
-    policy: RelationshipScoringPolicy,
-) -> dict[str, list[tuple[RelationshipObservation, Artifact]]]:
-    raw: list[tuple[Artifact, RelationshipReason, RelationshipStrength, float]] = []
-    source_ids: list[str] = []
-    for art in cache.active("memory"):
-        subject = str(art.header.subject_id or "")
-        if subject in _RESERVED_SUBJECTS or art.header.lineage.derived_from:
-            continue
-        if art.payload.get("relationship_policy_version") != RELATIONSHIP_POLICY_VERSION:
-            continue
-        try:
-            reason = RelationshipReason(str(art.payload.get("relationship_reason") or ""))
-            strength = RelationshipStrength(str(art.payload.get("relationship_strength") or ""))
-        except ValueError:
-            continue
-        confidence = _confidence(art)
-        if confidence < policy.minimum_evidence_confidence:
-            continue
-        ids = tuple(str(value) for value in art.header.lineage.sources if str(value))
-        if not ids:
-            continue
-        raw.append((art, reason, strength, confidence))
-        source_ids.extend(ids)
-
-    originals = sources.sources_by_ids(list(dict.fromkeys(source_ids))) if source_ids else {}
-    out: dict[str, list[tuple[RelationshipObservation, Artifact]]] = {}
-    for art, reason, strength, confidence in raw:
-        subject = str(art.header.subject_id or "")
-        ids = tuple(str(value) for value in art.header.lineage.sources if str(value))
-        rows = [originals.get(source_id) for source_id in ids]
-        if any(row is None for row in rows):
-            continue
-        user_rows = [row for row in rows if row is not None and row.role == "user"]
-        if not user_rows or any(row.speaker_id != subject for row in user_rows):
-            continue
-        scopes = {_scope_of(row.session_id) for row in rows if row is not None}
-        if len(scopes) != 1:
-            continue
-        observation = RelationshipObservation(
-            artifact_id=art.header.id,
-            subject_id=subject,
-            reason=reason,
-            strength=strength,
-            confidence=confidence,
-            source_ids=ids,
-            scope=next(iter(scopes)),
-        )
-        out.setdefault(subject, []).append((observation, art))
-    return out
-
-
-def migrate_v1_candidates(artifacts: ArtifactStore, sources: SourceStore, events) -> int:
-    """Queue attributable V1 observations for independent V2 verification."""
-    from core.relationship_rules import RelationshipCandidate, relationship_event_id
+def migrate_v1_candidates(
+    artifacts: ArtifactStore, sources: SourceStore, events: RelationshipEventStore,
+) -> int:
+    """Queue attributable historical V1 observations without trusting old scores."""
     queued = 0
     for art in artifacts.list("memory"):
-        record = artifacts.inspect_record(art.header.id)
-        for version in record.get("versions", []):
-            header = version.get("header", {})
-            payload = version.get("payload", {})
-            if payload.get("relationship_policy_version") != "relationship-v1" or header.get("lineage", {}).get("derived_from"):
+        subject = str(art.header.subject_id or "")
+        if subject in _RESERVED_SUBJECTS:
+            continue
+        known = {row.event_id for row in events.by_subject(subject, VERIFIER_VERSION)}
+        # Version rows keep a JSON header and the original JSON payload as blob content.
+        for version in reversed(artifacts.inspect_record(art.header.id).get("versions", [])):
+            try:
+                payload = json.loads(version["content"])
+                header = json.loads(version["header"])
+                if not isinstance(header, dict):
+                    continue
+                lineage = json.loads(header["lineage"])
+                if (not isinstance(payload, dict) or not isinstance(lineage, dict)
+                    or payload.get("relationship_policy_version") != "relationship-v1"
+                    or header.get("subject_id") != subject or lineage.get("derived_from")):
+                    continue
+                reason = RelationshipReason(payload["relationship_reason"])
+                strength = RelationshipStrength(payload["relationship_strength"])
+                raw_ids = lineage.get("sources")
+                if (not isinstance(raw_ids, list) or not raw_ids
+                    or any(not isinstance(source_id, str) or not source_id for source_id in raw_ids)):
+                    continue
+                ids = tuple(raw_ids)
+                if len(ids) != len(set(ids)):
+                    continue
+                loaded = sources.sources_by_ids(list(ids))
+                if len(loaded) != len(ids):
+                    continue
+                users = [loaded[source_id] for source_id in ids if loaded[source_id].role == "user"]
+                if reason is RelationshipReason.HARASSMENT:
+                    if len(users) < 2:
+                        continue
+                    primary = max(users, key=lambda source: (source.at, source.id))
+                elif len(users) == 1:
+                    primary = users[0]
+                else:
+                    continue
+                when = datetime.datetime.fromisoformat(primary.at)
+                scope = _scope_of(primary.session_id)
+                if (primary.speaker_id != subject or when.tzinfo is None
+                    or scope is ConversationScope.UNKNOWN
+                    or any(row.session_id != primary.session_id or
+                           (row.role == "user" and row.speaker_id != subject)
+                           for row in loaded.values())):
+                    continue
+                candidate = RelationshipCandidate(
+                    subject, reason, strength, primary.id, ids,
+                    primary.session_id, scope, art.header.id, int(version["revision"]),
+                )
+            except (KeyError, TypeError, ValueError, json.JSONDecodeError):
                 continue
-            ids = tuple(header.get("lineage", {}).get("sources", ()))
-            loaded = sources.sources_by_ids(list(ids))
-            primary = loaded.get(ids[0]) if ids else None
-            if primary is None or primary.role != "user" or not primary.at.endswith("+00:00"):
+            event_id = relationship_event_id(candidate)
+            if event_id in known:
                 continue
-            candidate = RelationshipCandidate(primary.speaker_id, RelationshipReason(payload["relationship_reason"]), RelationshipStrength(payload["relationship_strength"]), primary.id, ids, primary.session_id, _scope_of(primary.session_id), art.header.id, int(version.get("revision", 0)))
-            events.record_pending({"event_id": relationship_event_id(candidate), "verifier_version": "relationship-verifier-v2", "subject_id": candidate.subject_id, "reason": candidate.reason.value, "strength": candidate.strength.value, "scope": candidate.scope.value, "event_at": primary.at, "primary_source_id": primary.id, "source_ids": ids, "origin_artifact_id": art.header.id, "origin_revision": candidate.origin_revision})
+            events.record_pending({
+                "event_id": event_id, "verifier_version": VERIFIER_VERSION,
+                "subject_id": subject, "reason": reason.value, "strength": strength.value,
+                "scope": scope.value, "event_at": primary.at,
+                "primary_source_id": primary.id, "source_ids": ids,
+                "origin_artifact_id": art.header.id, "origin_revision": candidate.origin_revision,
+            })
+            known.add(event_id)
             queued += 1
     return queued
-
-
-
-def _replacement(
-    existing: Artifact | None,
-    subject_id: str,
-    plan,
-    policy: RelationshipScoringPolicy,
-) -> Artifact:
-    payload = {
-        "summary": summary_for(plan.band),
-        "affinity": round(plan.affinity, 6),
-        "confidence": round(plan.confidence, 6),
-        "evidence_count": plan.evidence_count,
-        "relation_band": plan.band.value,
-        "policy": {
-            "version": policy.version,
-            "private_weight": policy.private_weight,
-            "group_weight": policy.group_weight,
-            "learning_rate": policy.learning_rate,
-            "max_revision_delta": policy.max_revision_delta,
-        },
-    }
-    old_sources = existing.header.lineage.sources if existing else ()
-    old_derived = existing.header.lineage.derived_from if existing else ()
-    lineage = Lineage(
-        sources=tuple(dict.fromkeys((*old_sources, *plan.counted_source_ids))),
-        derived_from=tuple(dict.fromkeys((*old_derived, *plan.reviewed_artifact_ids))),
-    )
-    if existing is not None:
-        return revise(existing, payload=payload, lineage=lineage)
-    return make(
-        "relationship", payload, id=relationship_id(subject_id), subject_id=subject_id,
-        scope="private", said_by="inferred", shareable="private_only", lineage=lineage,
-    )
-
-
-def _scope_of(session_id: str) -> ConversationScope:
-    value = str(session_id or "")
-    if ":FriendMessage:" in value:
-        return ConversationScope.PRIVATE
-    if ":GroupMessage:" in value:
-        return ConversationScope.GROUP
-    return ConversationScope.UNKNOWN
-
-
-def _confidence(art: Artifact) -> float:
-    value = art.header.strength.confidence
-    if isinstance(value, bool):
-        return 0.0
-    try:
-        confidence = float(value)
-    except (TypeError, ValueError):
-        return 0.0
-    return confidence if math.isfinite(confidence) and 0.0 <= confidence <= 1.0 else 0.0
