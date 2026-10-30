@@ -3,10 +3,10 @@
 ## Unreleased
 
 ### 中文
-- 修复关系 V2：已核验事件按显式时间回放熟悉、信任、温度、张力、稳定性与置信度，关联修复降低对应张力；按 subject 提交带 Source 证据与版本历史的 Artifact，读取坏旧行时保持中性。V1 历史只在 Source 可归属且有时区时进入独立复核队列，旧 affinity 不复制。观察期不影响回复或语气；不重置已有数据、不新增表或配置。离线误报率由真实模型评测产生，未运行时不报告数值（#163）。
+- 修复关系 V2：已核验事件按显式时间回放熟悉、信任、温度、张力、稳定性与置信度，关联修复降低对应张力；按 subject 提交带 Source 证据与版本历史的 Artifact，读取坏旧行时保持中性。V1 历史只在 Source 可归属且有时区时进入独立复核队列，旧 affinity 不复制。观察期不影响回复或语气；不重置已有数据、不新增表或配置。离线误报率由真实模型评测产生，未运行时不报告数值。每周语义核验兼容 AstrBot 包模式，关系衰减兼容 Python 3.10（#163）。
 
 ### English
-- Repair Relationship V2: replay verified events at an explicit clock into familiarity, trust, warmth, tension, stability, and confidence, with linked repair reducing its prior tension; commit per-subject Artifacts with Source evidence and version history, and treat invalid legacy rows as neutral. Queue V1 history for independent verification only when Sources are attributable and timezone-aware, without copying affinity. Observation does not change replies or tone; existing data remains intact with no new tables or config. Offline false-positive rates require a real model evaluation and are not reported otherwise (#163).
+- Repair Relationship V2: replay verified events at an explicit clock into familiarity, trust, warmth, tension, stability, and confidence, with linked repair reducing its prior tension; commit per-subject Artifacts with Source evidence and version history, and treat invalid legacy rows as neutral. Queue V1 history for independent verification only when Sources are attributable and timezone-aware, without copying affinity. Observation does not change replies or tone; existing data remains intact with no new tables or config. Offline false-positive rates require a real model evaluation and are not reported otherwise. Weekly semantic verification works in AstrBot package mode, and relationship decay supports Python 3.10 (#163).
 
 ## 0.5.0 — 2026-10-28
 

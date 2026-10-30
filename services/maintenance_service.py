@@ -184,12 +184,20 @@ class MaintenanceService:
     async def _verify_relationships(self) -> None:
         if self.relationship_events is None or self.provider_for is None or self.sources is None:
             return
-        from perceive.model import ProviderChatModel
-        from perceive.relationship import verify_relationship
-        from core.relationship_rules import (
-            ConversationScope, RelationshipCandidate, RelationshipReason,
-            RelationshipStrength, VERIFIER_VERSION,
-        )
+        try:
+            from ..perceive.model import ProviderChatModel
+            from ..perceive.relationship import verify_relationship
+            from ..core.relationship_rules import (
+                ConversationScope, RelationshipCandidate, RelationshipReason,
+                RelationshipStrength, VERIFIER_VERSION,
+            )
+        except ImportError:  # Standalone tests use the repository as the import root.
+            from perceive.model import ProviderChatModel
+            from perceive.relationship import verify_relationship
+            from core.relationship_rules import (
+                ConversationScope, RelationshipCandidate, RelationshipReason,
+                RelationshipStrength, VERIFIER_VERSION,
+            )
         negative = {
             RelationshipReason.DISRESPECT, RelationshipReason.INSULT,
             RelationshipReason.THREAT, RelationshipReason.HARASSMENT,

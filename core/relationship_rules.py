@@ -122,7 +122,7 @@ _TRUST_IMPACT = {
 def _retention(age_days: float, half_life_days: float) -> float:
     if half_life_days == 0:
         return 1.0 if age_days == 0 else 0.0
-    return math.exp2(-age_days / half_life_days)
+    return 2.0 ** (-age_days / half_life_days)
 
 
 def _event_key(event: VerifiedRelationshipEvent) -> tuple:

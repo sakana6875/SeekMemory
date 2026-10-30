@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import os
 import sys
 import unittest
 from datetime import datetime, timezone
 from types import SimpleNamespace
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -169,5 +171,76 @@ class RelationshipVerifierTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(report["negative_false_positives"], 2)
         self.assertEqual(report["negative_false_positive_rate"], 1.0)
         self.assertEqual(report["status"], "measured")
+
+class RelationshipPackageModeTest(unittest.TestCase):
+    def test_pending_event_is_verified_when_loaded_as_plugin_package(self) -> None:
+        script = """
+import asyncio
+import json
+import sys
+import tempfile
+from contextlib import contextmanager
+from datetime import datetime
+from pathlib import Path
+from types import SimpleNamespace
+
+sys.path.insert(0, sys.argv[1])
+from SeekMemory.adapters.relationship_policy import RelationshipReader
+from SeekMemory.core.source import Source
+from SeekMemory.core.relationship_rules import VERIFIER_VERSION
+from SeekMemory.services.maintenance_service import MaintenanceService
+from SeekMemory.store import open_store
+from SeekMemory.store.cache import Cache
+
+with tempfile.TemporaryDirectory() as directory:
+    db = open_store(str(Path(directory) / "memory.db"))
+    try:
+        source = Source("s1", "t1", "bot:FriendMessage:u1", "u1", "user",
+                        "鱼，谢谢你帮我理清问题", "2026-10-26T12:00:00+00:00")
+        db.sources.append_sources([source])
+        db.relationship_events.record_pending({
+            "event_id": "event1", "verifier_version": VERIFIER_VERSION,
+            "subject_id": "u1", "reason": "gratitude", "strength": "mild",
+            "scope": "private", "event_at": source.at,
+            "primary_source_id": source.id, "source_ids": (source.id,),
+        })
+
+        class Provider:
+            async def text_chat(self, **_kwargs):
+                return SimpleNamespace(completion_text=json.dumps({
+                    "reason": "gratitude", "source_ids": [source.id],
+                    "target": "assistant", "decision": "verified",
+                }))
+
+        async def provider_for(_session):
+            return Provider()
+        class Journal:
+            @contextmanager
+            def span(self, *_args, **_kwargs):
+                yield {}
+
+            def record(self, *_args, **_kwargs):
+                pass
+
+        cache = Cache(db.artifacts)
+
+        service = MaintenanceService(
+            artifacts=db.artifacts, sources=db.sources, cache=cache, journal=Journal(),
+            task_id=lambda: "test", logger=SimpleNamespace(
+                info=lambda *_: None, warning=lambda *_: None),
+            clock=lambda: datetime.fromisoformat(source.at),
+            relationship_events=db.relationship_events, provider_for=provider_for,
+        )
+        assert asyncio.run(service.weekly())["relationships"] == 1
+        assert db.relationship_events.pending(10) == ()
+        assert RelationshipReader(cache).get("u1").warmth > 0
+    finally:
+        db.close()
+"""
+        result = subprocess.run(
+            [sys.executable, "-I", "-c", script, str(Path(__file__).resolve().parents[2])],
+            capture_output=True, text=True, timeout=30,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 if __name__ == "__main__":
     unittest.main()
