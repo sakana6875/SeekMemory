@@ -1,4 +1,7 @@
-"""Bounded JSONL trace adapter. No message text, database migration or network I/O."""
+"""Own bounded diagnostic JSONL and locking; no message bodies, migrations or network calls.
+
+管理有数量上限的诊断 JSONL 及锁，不处理消息正文、迁移或网络调用。
+"""
 from __future__ import annotations
 
 import json
@@ -11,14 +14,19 @@ from pathlib import Path
 
 try:
     from ..core.trace import FILTERS, clean_event, project_runs
-except ImportError:  # Standalone tests use the repository as the import root.
+except ImportError:  # Top-level package / 顶层包。
     from core.trace import FILTERS, clean_event, project_runs
 
 
+from .ports import TraceClock
+
+
 class TraceStore:
+    """Own a bounded diagnostic snapshot and file lock; resources come from the caller / 管理有数量上限的诊断快照及文件锁，资源由调用方提供。"""
     def __init__(self, path: Path, *, retention_days: int = 7, max_rows: int = 5000,
-                 clock=time.time) -> None:
+                 clock: TraceClock = time.time, read_only: bool = False) -> None:
         self.path = Path(path)
+        self.read_only = read_only
         self.retention_days = max(1, min(365, int(retention_days)))
         self.max_rows = max(1, min(5000, int(max_rows)))
         self.clock = clock
@@ -41,16 +49,18 @@ class TraceStore:
                                 UnicodeDecodeError):
                             continue
                 self.events = self._retained(self.events)
-                self._persist(self.events)
+                if not self.read_only:
+                    self._persist(self.events)
         except OSError:
             self.persistence_error = True
 
     def _retained(self, rows: list[dict]) -> list[dict]:
+        """Select rows inside the existing diagnostic retention limits / 选择既有诊断保留限制内的行。"""
         cutoff = self.clock() - self.retention_days * 86400
         return [r for r in rows if datetime.fromisoformat(r["at"]).timestamp() >= cutoff][-self.max_rows:]
 
     def _persist(self, rows: list[dict]) -> None:
-        """Atomic compaction prevents a failed rewrite from destroying old traces."""
+        """Replace diagnostic JSONL atomically; preserve the old file on failed replacement / 原子替换诊断 JSONL，替换失败时保留旧文件。"""
         self.path.parent.mkdir(parents=True, exist_ok=True)
         fd, name = tempfile.mkstemp(dir=self.path.parent, prefix=".run-trace-")
         try:
@@ -63,6 +73,9 @@ class TraceStore:
                 os.unlink(name)
 
     def append(self, row: dict) -> None:
+        """Append a cleaned row; failures raise and preserve the saved snapshot / 追加已清理的行，失败抛错并保留已保存快照。"""
+        if self.read_only:
+            raise PermissionError("trace_store_is_read_only")
         with self._lock:
             try:
                 row = clean_event(row)
@@ -70,25 +83,31 @@ class TraceStore:
                 rows = self._retained(combined)
                 compact = len(rows) != len(combined)
                 if len(combined) > self.max_rows:
-                    # Evict up to 1% in a batch to avoid rewriting 5000 rows per hook.
+                    # Evict up to 1% to avoid rewriting the full file on every hook.
+                    # 每批淘汰至多 1%，避免每次钩子调用都重写整个文件。
                     rows = rows[-(self.max_rows - max(1, self.max_rows // 100) + 1):]
                 if compact or self.persistence_error or not self.path.exists():
                     self._persist(rows)
                 else:
-                    # A failed append is repaired from the last good snapshot on retry.
+                    # Repair failed appends from the last good snapshot on retry.
+                    # 重试时从上次有效快照修复失败的追加。
                     with self.path.open("a", encoding="utf-8") as stream:
                         stream.write(json.dumps(row, ensure_ascii=False) + "\n")
                 self.events = rows
                 self.persistence_error = False
             except (OSError, ValueError, TypeError, KeyError, AttributeError):
                 self.persistence_error = True
+                # The caller decides fail-open behavior; never acknowledge a failed write.
+                # 由调用方决定如何隔离失败，不能将失败写入确认为成功。
+                raise
 
     def snapshot(self, state: str = "all") -> dict:
+        """Read projected runs; compact expired diagnostics only in write mode / 读取运行视图，仅写入模式裁剪过期诊断。"""
         if state not in FILTERS:
             raise ValueError("unknown_trace_filter")
         with self._lock:
             rows = self._retained(self.events)
-            if len(rows) != len(self.events):
+            if not self.read_only and len(rows) != len(self.events):
                 try:
                     self._persist(rows)
                     self.events = rows

@@ -39,4 +39,36 @@ runtime_gate_enabled 默认 false。关闭时，等待和后台 deferred dispatc
 
 RunRecorder 是 Source、pending projection、checkpoint 和 episode 的唯一运行时写回协调者，以 run_id 和确定性 Source ID 防止重复回调重复写入。runtime_episodes 是追加式业务审计元数据；RunTracer/TraceStore 是受字段白名单约束的诊断时间线。二者不保存对话正文，不互相替代。
 
+### 运行轨迹事件边界
+
+`app/runtime/tracing.py` 的 RunTracer 是宿主无关生产者，事件仅需要 get_extra/set_extra 关联状态；`core/trace.py` 拥有字段清理与运行投影，`store/run_trace.py` 拥有 JSONL 持久化。管理查询消费同一快照，见 [WebUI](webui.md#运行轨迹查询)。
+
+| 事件 | 记录时机 |
+|---|---|
+| `agent_begin` | 运行开始，关联随机生成的 run_id |
+| `llm_request` / `llm_response` | 请求编号、召回白名单摘要与可用耗时；不含模型输入输出 |
+| `tool_call` / `tool_result` | 工具名及可用耗时；不含参数或返回正文，未知结果保持 unknown |
+| `agent_done` | 运行结束状态 |
+| `message_sent` | 已观察到发送成功；独立于记忆注入 |
+
+公共事件字段只有 run_id、sequence、at、event、request_index、status、duration_ms、tool、recall。recall 仅保留有界生成 ID、计数、固定 mode/fallback/disclosure 枚举和 gate 数值；不保存消息、提示词、响应、来源正文、工具参数/结果、用户/会话标识或凭据。写入和重载均重新清理未知字段。事件状态为 running/ok/error/unknown；运行状态沿用投影：结束错误为 error，其他结束或发送成功为 completed，重启前未结束为 interrupted，其余为 running。
+
+TraceStore 默认保留 7 天、最多 5000 条事件。生产者清理过期与超量记录；诊断写入失败不阻断主流程，并通过 persistence_error 提示记录可能不完整。记录保留或缺失不能用来证明未执行某步骤。独立控制台在启动时只读加载离线文件；替换快照后需重启服务，不与运行中的宿主共用数据目录。
+
 ToolPolicy 在模型请求前可从 req.func_tool 移除不允许的工具；观察工具调用的 hook 只是诊断信号，不能单独阻止执行。实际过滤由 runtime_tool_filter_enabled 控制，默认关闭。
+
+## 交付后补写
+
+Runtime 在确认发送后立即保留进程内交付凭据。会话确认、Source/队列及审计分阶段完成；失败返回 `RunResult(delivered=True, error="writeback_pending")`，不重新生成或发送。`AgentRuntime.retry_writebacks()` 返回完成的补写项数；worker 每轮在发言开关判断前调用，停止时再次尝试。同一会话旧交付未补完时，后台新发言暂停，普通消息仍接收。普通回复即使原始消息保存失败，也返回已准备编号供宿主关联交付；交付回调先确认会话，再补原始消息及审计。
+
+RunRecorder 保留原始消息、投影及逐条强化的完成位置，失败仅重试缺失阶段。新仓储审计的稳定编号来自会话和 run_id，历史记录不改写。状态读取错误不再伪装成空会话，状态/审计写入失败保留 last_error 并抛出；编排方负责重试，诊断仍不影响业务。文件替换失败保留磁盘和内存中的旧状态。
+
+凭据及补偿不跨进程持久化。突然退出或发送结果未知仍可能重试，不能据此承诺跨重启单次发送。
+
+## 内部文件及资源
+
+运行时入口保留在 runtime.py；transitions.py 只计算独立状态副本，dispatch.py 通过端口执行后台任务，writeback.py 管理已确认交付的补偿。三者不反向依赖 AgentRuntime；recorder.py 唯一协调原始消息/队列/强化/审计写回。现有 state、episode、actions 内的存储转接以及宿主 tracing、工具过滤暂留原处。源码说明统一英文在前、中文等义，接口清单见 app 模块文档。
+
+文件审计补偿以原有 `session_id/run_id` 字段识别完整已保存行；追加结果不确定时重新读取已保存编号，防止再次追加。此去重仅覆盖同实例及重建实例后的完整行，不是跨进程文件锁，也不增加文件字段。
+
+记忆上下文构造使用纯 `RecallService.query()`。明确包含记录通过可选通用 `MemoryContextRecorder` 转发；普通宿主钩子在附加到请求后调用，后台在模型调用前立即调用。运行时不包含指定记忆规则；旧 `RecallService.build()` 仍是兼容的查询加记录入口。

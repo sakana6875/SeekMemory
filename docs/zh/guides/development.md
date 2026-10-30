@@ -26,24 +26,36 @@
 
 执行严格构建：
 
+    python3 scripts/check_docs_structure.py
     mkdocs build --strict
+
+结构检查验证导航、双语页面集合及相对 Markdown 文件链接；严格构建检查站点能否按当前配置生成。两者不自动验证文档描述是否符合代码。若缺少 `material` 主题，先安装上述文档依赖，不能把依赖缺失当作文档已经通过构建。
 
 ## 后端验证层
 
-脚本依据 tests/layers.py 把平铺的 unittest 文件分为多个责任层。按改动选择适当范围：
+脚本依据 tests/layers.py 把平铺的 unittest 文件分层，显式 `_unit.py`、`_integration.py` 等后缀优先于旧名称规则。每个文件在独立进程中通过 unittest 发现执行，包含 `__main__` 之后的测试定义，宿主替身不会在文件间传播；全部文件执行后，任一失败均使脚本返回失败。旧文件仍可能跨模块，层名不保证所有依赖完全隔离。按改动选择适当范围：
 
     python3 scripts/run_tests.py --layer unit
     python3 scripts/run_tests.py --layer contract
+    python3 scripts/run_tests.py --layer conformance
     python3 scripts/run_tests.py --layer integration
     python3 scripts/run_tests.py --layer host
     python3 scripts/run_tests.py --layer smoke
     python3 scripts/run_tests.py --layer all
 
-也可直接运行全部兼容测试文件：
+也可在一个进程中发现全部文件；宿主替身可能影响同进程中的可选宿主测试，宿主验收应使用上面的独立进程入口：
 
     python3 -m unittest discover -s tests -p 'test_*.py' -q
 
-测试不会自动证明真实模型的抽取质量，也不会在没有 AstrBot 的环境里证明宿主行为。模型评估和容量探测属于单独的人工流程；参见 [benchmarks/README.md](../../../benchmarks/README.md)。
+按能力选择 core 检查时，参见 [core 验证入口与证据范围](../architecture/modules/core.md#core-verification)：其中列出现有测试及定向命令，并区分纯规则和完整流程。接口导出检查不等于所有导出操作的完整行为覆盖。
+
+测试不会自动证明真实模型的抽取质量，也不会在没有 AstrBot 的环境里证明宿主行为。跑分与测试的测量范围不同；固定记忆回归会以同一评测器和冻结基线检查逐题退化，失败返回非零；历史综合分不作验收，BM25 另有冻结验收。字数也不等同于 token 或费用；具体定义和限制见 [benchmarks/README.md](../../../benchmarks/README.md)。
+
+## 离线脚本与产物
+
+`scripts/snapshot_db.py` 创建包含 WAL 的一致备份，关闭连接后才原子发布，失败保留原备份；不能把源数据库当作目标。人格初始化、待处理迁移和关系回滚脚本在自身作用域关闭存储。运行服务创建者负责关闭监听端口，保存启动信息失败也会清理。
+
+`benchmarks/run.py`、规模及消融的常规输出位于新的忽略运行目录，不覆盖历史报告。发布打包只是本地产物构建，不代表发布或部署授权。
 
 ## 管理界面
 
@@ -71,3 +83,18 @@ check 包含类型生成检查、TypeScript、lint、前端测试和格式检查
 - 修改事件路径、服务组合或宿主边界时，更新架构总览和对应模块页。
 - 文档只描述已由当前代码确认的行为；工作计划和 review 记录留在 GitHub Issues/PRs，不在 docs 中建立 RFC 或逐项工作档案。
 - 中文和英文页面在 docs/zh 与 docs/en 镜像维护；站点导航配置见 mkdocs.yml，页面结构由 scripts/check_docs_structure.py 校验。
+
+## 人格控制台预览与人格包
+
+Mock 控制台使用 #/home、#/studio、#/memory、#/store、#/dream、
+#/system?section=traces 等 hash 路由。预览选择器提供加载、空、错误和
+1,000 节点／2,000 关联压力数据。预览中的安装、导入及编辑只操作内存数据。
+dev:host 使用已认证的 AstrBot 页面桥接器；dev:standalone 使用真实本机 HTTP API。
+生产构建可通过独立服务或 AstrBot 打开，启动和令牌配置见[管理界面操作](webui.md#本机独立控制台)。
+前端测试会启动临时 Python API，可用 SEEKMEMORY_TEST_PYTHON 指定 Python 3.10+ 解释器。
+
+内置人格文件位于 persona_seeds/&lt;id&gt;/persona.json。新增时在 index.json
+登记 ID，附带 LICENSE，并遵循[人格 seed 指南](persona-seed.md)。本地导入写入
+插件数据目录的 persona_packs/。移除把文件移到 .trash，不改变当前人格。
+恢复时检查备份 JSON 的 ID 和版本，再从“我的人格包”导入。覆盖同 ID 文件需要在
+确认时提供当前版本；更新蓝图不会自动安装。

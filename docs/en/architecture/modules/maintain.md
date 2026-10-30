@@ -25,3 +25,33 @@ Weekly maintenance first queues V1 memory versions with attributable, timezone-a
 ## Rules not connected to the production flow
 
 reflect.py can compute wrong/right signals from adjacent user messages, but the current repository has no production caller. It is not an automatic reflection, memory-repair, or reinforcement path. Documentation and configuration must not present it as an enabled online feature.
+
+## Interfaces and plan ownership
+
+`maintain/domain.py` explicitly exports supported maintenance use cases and immutable `RevisionWrite` / `RevisionPlan` data. `maintain/ports.py` reuses existing Artifact/Source/cache protocols. Unrelated maintenance imports and return values remain available; retired V1 relationship helpers are removed. A `RevisionPlan` names one group transaction; distinct plans or relationship subjects are not collectively atomic. Resource construction/shutdown belongs to composition.
+
+| Files | Responsibility and effects | Logical complexity and coupling |
+|---|---|---|
+| `decay.py`, `lifecycle.py` | Read active view → prepare group → commit → remove cached entries | Low: ordered I/O, one atomic group |
+| `expiry_policy.py` | Existing retention and expiry revision decisions | Low/medium: supplied data, no repository calls |
+| `merge.py`, `merge_policy.py` | Read subject/scope groups; cluster and prepare one create/retire group; commit and cache | Medium/high: each cluster is atomic; pure clustering/wording separate from I/O |
+| `impression.py`, `impression_policy.py` | Read rivals, match and prepare old/new revisions; one atomic merge | Medium: subject/scope and evidence guards retained |
+| `self_impression.py`, `self_impression_policy.py` | Read original paired evidence and referenced episodes; group observations and prepare revisions; commit then cache | High: exact immutable pairing and independent count ownership |
+| `persona.py`, `persona_policy.py` | Read verified self-candidates, prepare seed-preserving persona and retire duplicates in one group | Medium: no user-private wording promoted to global persona |
+| `relationship.py` | Queue attributable V1 versions for independent verification; replay verified Source events into per-subject V2 revisions through CAS and cache repair | Medium: independent subject transactions and no fabricated evidence |
+| `link.py` | Optional bounded graph enhancement and legacy CAS persistence | Medium: optional edges separate from memory transactions |
+| `reflect.py`, `promote.py` | Pure reflection signals (no production caller) and verified self-candidate compatibility entry | Low/medium: documented actual wiring |
+
+The matching variants deliberately remain separate: impression Dice, merge/reflect Jaccard and graph-link Dice are not interchangeable. Impression matching uses the shared alphanumeric rule in app; relationship V2 uses its own verified, time-aware projection. Existing non-relationship matching and seed rules are unchanged by this integration.
+
+## Prepared-write recovery
+
+`MaintenanceService` retains one `MaintenanceWriter`. Each task prepares an exact `RevisionPlan`, then the writer uses the existing single or group transaction. Failed database writes retain that exact plan/IDs; CAS conflicts discard it without rebasing or overwriting newer content. Successful commits are recorded and consumed before cache work. Cache-only repair tracks committed IDs and reads their newest database heads; it never repeats a version commit.
+
+Before deriving new plans from cache, the writer retries unfinished work. A still-unrepaired view reports `maintenance_writeback_pending`, preventing stale-cache recreation of self-impressions or parallel personas. Service outcomes include `writeback_pending` counts where a final cache repair remains; pure background compensation and shutdown can retry without model/policy execution. Model-synthesized persona drafts also use this writer, so a failed commit can be repaired without another model request. Rebinding the existing caller-owned repository/cache fields keeps prepared progress and uses the current resources.
+
+Free functions accept an optional keyword writer. Existing callers keep their return shapes and propagation of cache failures; long-lived services inject the retained writer and defer cache-only errors. Distinct group/subject plans remain independent transactions. Recovery is process-local; no persistent task tables or crash/multiprocess guarantee is added. Committed-ID repair is delegated to the shared app capability; the writer retains semantic plans only.
+
+`tests/test_maintenance_failure_recovery.py` covers exact failed-plan IDs, repeated cache failures with newer versions, no parallel personas, conflicting-group atomicity and no repeated persona model calls. Reverting the recovery commit needs no data migration.
+
+Committed-ID cache repair is shared through `app.CacheRepairs`; the composition root injects the same instance into checkpoint, extraction, context and maintenance writers. Business plans remain with each use case, and per-owner counts keep unrelated repairs out of checkpoint pending totals.

@@ -1,4 +1,4 @@
-"""Host-agnostic runtime contracts, re-exported for existing imports."""
+"""Compatibility exports for host-neutral runtime declarations; no implementation / 与宿主无关的运行时声明兼容导出，不包含实现。"""
 
 from .actions import (
     ActionKind,
@@ -22,6 +22,7 @@ from .events import (
 from .ports import (
     Clock,
     MemoryContext,
+    MemoryContextRecorder,
     MemoryContextPort,
     MemoryContextRequest,
     MessageSender,
@@ -44,6 +45,7 @@ __all__ = [
     "Clock",
     "MemoryContext",
     "MemoryContextPort",
+    "MemoryContextRecorder",
     "MemoryContextRequest",
     "MessageSender",
     "ModelGateway",

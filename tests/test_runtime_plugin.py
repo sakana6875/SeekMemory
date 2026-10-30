@@ -5,10 +5,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
+import tempfile
 import types
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT.parent))
@@ -17,7 +19,14 @@ sys.path.insert(0, str(ROOT.parent))
 astrbot = types.ModuleType("astrbot")
 api = types.ModuleType("astrbot.api")
 api.logger = logging.getLogger("seekmemory-test")
-api.star = SimpleNamespace(Context=object, Star=object)
+
+
+class _HostStar:
+    def __init__(self, context, config):
+        pass
+
+
+api.star = SimpleNamespace(Context=object, Star=_HostStar)
 event = types.ModuleType("astrbot.api.event")
 event.AstrMessageEvent = object
 event.filter = SimpleNamespace(
@@ -61,6 +70,59 @@ class _Sources:
         return self.row
 
 
+class AttentionHookDelegationTest(unittest.TestCase):
+    def test_hooks_expose_only_declared_host_dependencies(self) -> None:
+        host = SimpleNamespace(unrelated_resource=object(), clock=lambda: 1.0)
+        for hook in (AstrBotHooks(host), AttentionHooks(host)):
+            self.assertIs(hook._bindings, host)
+            with self.assertRaises(AttributeError):
+                _ = hook.unrelated_resource
+
+    def test_registration_exports_keep_plugin_callback_metadata(self) -> None:
+        domain = importlib.import_module(f"{ROOT.name}.adapters.astrbot.domain")
+        registration = importlib.import_module(f"{ROOT.name}.adapters.astrbot.registration")
+        hooks = importlib.import_module(f"{ROOT.name}.adapters.astrbot.hooks")
+        self.assertIs(domain.build_astrbot_hooks, hooks.build_astrbot_hooks)
+        self.assertIs(domain.build_astrbot_hooks, registration.build_astrbot_hooks)
+        original_filter = registration.filter
+        decorator = lambda *_args, **_kwargs: lambda function: function
+        registration.filter = SimpleNamespace(
+            EventMessageType=SimpleNamespace(ALL="all"),
+            **{name: decorator for name in (
+                "on_llm_request", "event_message_type", "on_llm_response", "after_message_sent",
+                "on_agent_begin", "on_agent_done", "on_using_llm_tool", "on_llm_tool_respond",
+                "on_astrbot_loaded",
+            )},
+        )
+        try:
+            callbacks = domain.build_astrbot_hooks("seekmemory_test_plugin.main")
+        finally:
+            registration.filter = original_filter
+        self.assertEqual(list(callbacks), [
+            "inject_memory", "buffer_message", "capture_reply", "record_delivery",
+            "observe_agent_begin", "observe_agent_done", "observe_tool", "observe_tool_result",
+            "start_jobs", "attention_gate",
+        ])
+        for name, callback in callbacks.items():
+            self.assertEqual(callback.__name__, name)
+            self.assertEqual(callback.__module__, "seekmemory_test_plugin.main")
+            self.assertEqual(callback.__qualname__, "Main." + name)
+
+    def test_may_observe_falls_back_to_host_hooks(self) -> None:
+        calls = []
+
+        class Hooks:
+            def _may_observe(self, event):
+                calls.append(event)
+                return True
+
+        host = SimpleNamespace(hooks=Hooks())
+        attention = AttentionHooks(host)
+        event = object()
+        self.assertTrue(attention._may_observe(event))
+        self.assertEqual(calls, [event])
+
+
 class RuntimePluginContextTest(unittest.TestCase):
     def test_plugin_uses_explicit_host_composition(self):
         self.assertNotIn(AstrBotHooks, AstrBotPlugin.__mro__)
@@ -85,6 +147,69 @@ class RuntimePluginContextTest(unittest.TestCase):
         self.assertEqual(context.bot_id, "bot-1")
         self.assertEqual(context.event_time, 10.0)
         self.assertEqual(context.received_at, 123.5)
+
+
+class ConsoleLifecycleTest(unittest.IsolatedAsyncioTestCase):
+    """Exercise production composition against a minimal host boundary."""
+
+    async def asyncSetUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.context = SimpleNamespace(registered_web_apis=[])
+
+        async def provider(umo=None):
+            return None
+
+        def register(*route):
+            self.context.registered_web_apis.append(route)
+
+        self.context.get_using_provider_async = provider
+        self.context.register_web_api = register
+        self.web_module = patch.dict(sys.modules, {
+            "astrbot.api.web": types.ModuleType("astrbot.api.web"),
+        })
+        self.web_module.start()
+        self.addCleanup(self.web_module.stop)
+        self.plugin = AstrBotPlugin(self.context, {
+            "db_path": str(Path(self.temp.name) / "memory.db"),
+        })
+        self.addAsyncCleanup(self.plugin.stop)
+
+    async def test_restart_preserves_console_packs_and_dream_history(self):
+        await self.plugin.start()
+        self.assertTrue(self.plugin.ready)
+        self.assertEqual(len(self.context.registered_web_apis), 1)
+        before = self.plugin.services.management_service.pack_catalog()
+        self.assertGreater(len(before["items"]), 0)
+        self.plugin.store.dreams.begin("2026-10-28")
+        self.plugin.store.dreams.finish("2026-10-28", status="done", summary={})
+        history = self.plugin.services.management_service.dream_journal()
+        self.assertEqual(len(history["items"]), 1)
+
+        await self.plugin.stop()
+        self.assertFalse(self.plugin.ready)
+        self.assertEqual(self.context.registered_web_apis, [])
+        await self.plugin.start()
+        self.assertTrue(self.plugin.ready)
+        self.assertEqual(len(self.context.registered_web_apis), 1)
+        management = self.plugin.services.management_service
+        self.assertEqual(management.pack_catalog(), before)
+        self.assertEqual(management.dream_journal(), history)
+
+    async def test_registration_failure_allows_retry_with_console_services(self):
+        with patch.object(self.context, "register_web_api", side_effect=RuntimeError("host unavailable")):
+            with self.assertRaises(RuntimeError):
+                await self.plugin.start()
+        self.assertFalse(self.plugin.ready)
+        self.assertIsNone(self.plugin.store)
+        self.assertEqual(self.context.registered_web_apis, [])
+
+        await self.plugin.start()
+        self.assertTrue(self.plugin.ready)
+        management = self.plugin.services.management_service
+        self.assertGreater(len(management.pack_catalog()["items"]), 0)
+        self.assertEqual(management.dream_journal()["items"], [])
+        self.assertEqual(len(self.context.registered_web_apis), 1)
 
 
 class HostHookActionTest(unittest.TestCase):

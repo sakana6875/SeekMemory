@@ -160,6 +160,8 @@ class ApiContractTests(unittest.IsolatedAsyncioTestCase):
             ledger=db.ledger,
             cache=cache,
             recall_service=self.plugin.services.recall_service,
+            packs=importlib.import_module("_seekmemory_contract.adapters.persona_packs").FilePersonaPacks(ROOT / "persona_seeds", Path(self.temp.name) / "packs"),
+            dreams=db.dreams,
         )
         self.plugin.run_traces = TraceStore(Path(self.temp.name) / "runs.jsonl")
         self.plugin.buffer.add(
@@ -323,16 +325,117 @@ class ApiContractTests(unittest.IsolatedAsyncioTestCase):
         tracer.begin(event)
         tracer.request(event, {"mode": "strict", "final_ids": [self.ids[0]],
                                "query": "NEVER_PERSIST_THIS"})
-        tracer.done(event, "ok")
+        tracer.response(event, "error")
+        tracer.done(event, "error")
         result = await self.call("traces")
         self.assertEqual(len(result["runs"]), 1)
         self.assertFalse(result["runs"][0]["delivered"])
         self.assertNotIn("NEVER_PERSIST_THIS", json.dumps(result))
         filtered = await self.call("traces", query={"state": "not_recalled"})
         self.assertEqual(filtered["runs"], [])
+        matched = await self.call("traces", query={"run_id": tracer.run_id(event),
+            "status": "error", "since": result["runs"][0]["updated_at"],
+            "until": result["runs"][0]["updated_at"]})
+        self.assertEqual(matched, result)
+        self.assertEqual([step["status"] for step in matched["events"]][-2:], ["error", "error"])
+        self.assertEqual((await self.call("traces", query={"status": "completed"}))["runs"], [])
         await self.call("traces", username="", expected=401)
         await self.call("traces", method="POST", expected=405)
         await self.call("traces", query={"state": "invalid"}, expected=400)
+        for field in ("run_id", "status", "since", "until"):
+            rejected = await self.call("traces", query={field: "PRIVATE_SENTINEL"}, expected=400)
+            self.assertNotIn("PRIVATE_SENTINEL", json.dumps(rejected))
+
+    async def test_console_reads_writes_and_guards(self):
+        for action in ("graph", "impressions", "dream", "packs", "pack"):
+            query = {"reference": "official/big_fish"} if action == "pack" else {}
+            await self.call(action, query=query)
+            await self.call(action, username=None, query=query, expected=401)
+            await self.call(action, method="POST", query=query, expected=405)
+        graph = await self.call("graph")
+        self.assertEqual(graph["limit"], 120)
+        self.assertLessEqual(len(graph["nodes"]), 120)
+        self.assertLessEqual(len(graph["edges"]), 240)
+        await self.call("packs", query={"collection":"invalid"}, expected=400)
+        await self.call("impressions", query={"offset":"bad"}, expected=400)
+        await self.call("pack", query={"reference":"mine/../secret"}, expected=400)
+        await self.call("pack", query={"reference":"mine/missing"}, expected=404)
+        service = self.plugin.services.management_service
+        current = service.cache.active("persona")[0]
+        command = {"operation":"install", "reference":"official/big_fish",
+                   "expectedId":current.header.id, "expectedRevision":current.header.revision,
+                   "expectedDigest":service.pack_detail("official/big_fish")["digest"], "confirmed":True}
+        await self.call("persona", command, username=None, expected=401)
+        await self.call("persona", method="GET", expected=405)
+        await self.call("persona", {**command,"confirmed":False}, expected=400)
+        await self.call("persona", {**command,"extra":True}, expected=400)
+        await self.call("persona", {**command,"expectedDigest":"0" * 64}, expected=409)
+        result = await self.call("persona", command)
+        self.assertEqual(result["revision"], current.header.revision + 1)
+        self.plugin.services.status_service = importlib.import_module("_seekmemory_contract.services.status_service").StatusService(artifacts=self.plugin.store.artifacts,ledger=self.plugin.store.ledger)
+        await self.call("status")
+        await self.call("persona", command, expected=409)
+        seed = service.pack_detail("official/big_fish")["seed"]
+        imported = await self.call("persona", {"operation":"import","seed":seed,"confirmed":True})
+        await self.call("packs", query={"collection":"mine"})
+        await self.call("persona", {"operation":"remove",**imported,"confirmed":True})
+        await self.call("task", {"kind":"weekly","confirmed":True})
+        await self.call("persona", command, expected=409)
+        await self.plugin.jobs.close()
+        self.assertEqual(self.plugin.store.sources.recent_sources(since="",limit=100), [])
+
+    async def test_complete_pack_artwork_export_and_install_boundaries(self):
+        from persona_pack_fixture import pack
+        service = self.plugin.services.management_service
+        seed = service.pack_detail("official/big_fish")["seed"]
+        complete = pack(seed)
+        result = await self.call("persona", {"operation": "importPack", "pack": complete, "confirmed": True})
+        reference = result["reference"]
+        for action in ("packArtwork", "packExport"):
+            await self.call(action, query={"reference": reference})
+            await self.call(action, username=None, query={"reference": reference}, expected=401)
+            await self.call(action, method="POST", query={"reference": reference}, expected=405)
+            await self.call(action, query={"reference": "mine/missing"}, expected=404)
+            await self.call(action, query={"reference": "mine/../secret"}, expected=400)
+        exported = await self.call("packExport", query={"reference": reference})
+        self.assertEqual(exported, complete)
+        self.assertEqual(service.pack_artwork(reference), complete["artwork"])
+        await self.call("packArtwork", query={"reference": "official/big_fish"}, expected=404)
+        await self.call("persona", {"operation": "importPack", "pack": {**complete, "artwork": {"mediaType": "image/png", "dataBase64": "broken"}}, "confirmed": True}, expected=400)
+        await self.call("persona", {"operation": "importPack", "pack": complete, "confirmed": False}, expected=400)
+        preview = service.pack_detail(reference)
+        current = service.cache.active("persona")[0]
+        installed = await self.call("persona", {"operation": "install", "reference": reference,
+            "expectedId": current.header.id, "expectedRevision": current.header.revision,
+            "expectedDigest": preview["digest"], "confirmed": True})
+        payload = service.artifacts.get(installed["id"]).payload
+        self.assertNotIn("artwork", payload)
+        self.assertNotIn("licenseText", payload)
+        self.assertEqual(self.plugin.store.sources.recent_sources(since="", limit=100), [])
+        await self.call("persona", {"operation": "importPack", "pack": complete, "padding": "x" * (3 * 1024 * 1024), "confirmed": True}, expected=413)
+
+    async def test_persona_rollback_route_preserves_history_and_guards(self):
+        service = self.plugin.services.management_service
+        seed = service.pack_detail("official/big_fish")["seed"]
+        first = service.bootstrap_persona(seed)
+        second = service.bootstrap_persona({**seed, "persona": "Changed persona"})
+        body = {"id": first["id"], "revision": first["revision"],
+                "reason": "Restore reviewed version", "confirmed": True}
+        await self.call("rollbackPersona", body, username=None, expected=401)
+        await self.call("rollbackPersona", method="GET", expected=405)
+        await self.call("rollbackPersona", {**body, "confirmed": False}, expected=400)
+        await self.call("rollbackPersona", {**body, "reason": " "}, expected=400)
+        await self.call("rollbackPersona", {**body, "revision": 999}, expected=400)
+        history = service.artifacts.history(first["id"])
+        result = await self.call("rollbackPersona", body)
+        self.assertEqual(result["revision"], second["revision"] + 1)
+        self.assertEqual(result["restoredRevision"], first["revision"])
+        self.assertEqual(service.artifacts.get(first["id"]).payload["text"], seed["persona"])
+        self.assertEqual(len(service.artifacts.history(first["id"])), len(history) + 1)
+        self.assertTrue(any(row["reason"] == body["reason"] for row in self.plugin.store.ledger.entries()))
+        await self.call("task", {"kind": "weekly", "confirmed": True})
+        await self.call("rollbackPersona", body, expected=409)
+        await self.plugin.jobs.close()
 
     async def test_trimmed_text_limits_match_request_contract(self):
         query = {
@@ -351,7 +454,7 @@ class ApiContractTests(unittest.IsolatedAsyncioTestCase):
     async def test_contract_rejects_mutated_shapes_and_requests(self):
         for schema in SPEC["components"]["schemas"].values():
             Draft202012Validator.check_schema(schema)
-        self.assertEqual(len(SPEC["paths"]), 9)
+        self.assertEqual(len(SPEC["paths"]), 18)
         result = await self.call("status")
         for bad in ({**result, "ready": "yes"}, {**result, "schedulerCount": -1}):
             with self.assertRaises(ValidationError):

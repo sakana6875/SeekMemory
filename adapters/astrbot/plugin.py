@@ -1,4 +1,7 @@
-"""AstrBot host composition for SeekMemory."""
+"""Own AstrBot resource composition and lifecycle; keep construction and cleanup order visible.
+
+管理 AstrBot 资源组装及生命周期，明确构造和清理顺序。
+"""
 
 from __future__ import annotations
 
@@ -13,6 +16,7 @@ from astrbot.core.utils.astrbot_path import get_astrbot_plugin_data_path
 
 from ...app.budget import budget_from_config
 from ...app.checkpoint import CheckpointManager
+from ...app.cache_repair import CacheRepairs
 from ...app.dream import DreamCycle
 from ...app.runtime import (
     AgentRuntime,
@@ -36,7 +40,6 @@ from ...app.runtime import (
 from ...app.runtime.tracing import RunTracer
 from ...core.capacity import CapacityGovernor, CapacityThresholds, load_thresholds
 from ...core.graph import Graph
-from ...core.tree import Tree
 from ...services import (
     AccessPolicy,
     AccessService,
@@ -48,6 +51,7 @@ from ...services import (
     RecallService,
     ServiceCollection,
     StatusService,
+    TreeService,
 )
 from ...perceive.model import ProviderChatModel
 from ...recall.retriever import HybridRetriever
@@ -66,14 +70,11 @@ from .hooks import AstrBotHooks
 from .runtime import AstrBotRuntimeAdapter
 from .time import AstrBotBuffer, AstrBotRunRecorder, AstrBotSourceView
 from .topics import AstrBotTopicSource
+from ..persona_packs import FilePersonaPacks
 from ..relationship_policy import RelationshipReader
 
 class AstrBotPlugin(star.Star):
-    """Composition root and lifecycle owner for the AstrBot host.
-
-    Event handlers live in ``adapters.astrbot.hooks``. This class only builds
-    services, exposes the shared plugin state, and starts/stops background work.
-    """
+    """Own resource composition and lifecycle; handlers use explicit host bindings / 管理资源组装及生命周期，处理函数使用明确宿主依赖。"""
 
     def __init__(self, context: star.Context, config: dict | None = None) -> None:
         super().__init__(context, config)
@@ -86,11 +87,12 @@ class AstrBotPlugin(star.Star):
         self.services: ServiceCollection | None = None
         self.store: Store | None = None
         self.cache: Cache | None = None
-        self.tree: Tree | None = None
+        self.tree: TreeService | None = None
         self.graph: Graph | None = None
         self.hybrid_retriever: HybridRetriever | None = None
         self.buffer: AstrBotBuffer | None = None
         self.checkpoint: CheckpointManager | None = None
+        self.cache_repairs: CacheRepairs | None = None
         self.budget = budget_from_config(self._c)
         self.dream: DreamCycle | None = None
         self.journal: Journal | None = None
@@ -102,6 +104,7 @@ class AstrBotPlugin(star.Star):
         self.capacity: CapacityGovernor | None = None
         self.relationship_reader: RelationshipReader | None = None
         self._last_runtime_prune_at = 0.0
+        self._self_id = ""
         self._started = False
         self._lifecycle_lock = asyncio.Lock()
         self.actions = None
@@ -111,6 +114,7 @@ class AstrBotPlugin(star.Star):
         self.web = None
 
     async def start(self) -> None:
+        """Serialize startup; clean partially created resources on failure/cancellation / 串行启动，失败或取消时清理部分创建的资源。"""
         async with self._lifecycle_lock:
             if self._started:
                 return
@@ -121,6 +125,7 @@ class AstrBotPlugin(star.Star):
                 raise
 
     async def _start(self) -> None:
+        """Construct the existing resource graph in dependency order, then register host routes / 按依赖顺序构造既有资源图，再注册宿主路由。"""
         if self._started:
             return
         self.ready = False
@@ -160,6 +165,7 @@ class AstrBotPlugin(star.Star):
             await self._stop()
             return
         recall = RecallService(
+            cache_repairs=self.cache_repairs,
             cache=self.cache,
             graph=self.graph,
             artifacts=self.store.artifacts if self.store is not None else None,
@@ -176,6 +182,9 @@ class AstrBotPlugin(star.Star):
             ledger=self.store.ledger if self.store is not None else None,
             cache=self.cache,
             recall_service=recall,
+            packs=FilePersonaPacks(Path(__file__).resolve().parents[2] / "persona_seeds",
+                                   self.data_path.parent / "persona_packs"),
+            dreams=self.store.dreams if self.store is not None else None,
         )
         if self.store is not None:
             state_store = RepoStateStore(self.store.runtime_state)
@@ -204,10 +213,14 @@ class AstrBotPlugin(star.Star):
         )
         runtime = AgentRuntime(
             state_store,
-            policy=DefaultAttentionPolicy(),
+            policy=DefaultAttentionPolicy(
+                followup_rounds=int(self._c("attention_followup_rounds", 3)),
+                owner_always_reply=bool(self._c("attention_owner_always_reply", True)),
+            ),
             trace=self.trace,
             clock=self.clock,
             memory_context=SeekMemoryContextAdapter(self._runtime_memory_context),
+            context_recorder=SeekMemoryContextAdapter(self._runtime_memory_context, self._record_memory_context),
             wait_seconds=(
                 int(self._c("runtime_wait_seconds", 5))
                 if bool(self._c("runtime_gate_enabled", False)) else 0
@@ -231,6 +244,7 @@ class AstrBotPlugin(star.Star):
                 log=lambda msg: logger.info(f"[seekmemory] {msg}"),
             )
         maintenance = MaintenanceService(
+            cache_repairs=self.cache_repairs,
             artifacts=self.store.artifacts if self.store is not None else None,
             sources=self.store.sources if self.store is not None else None,
             cache=self.cache,
@@ -240,7 +254,7 @@ class AstrBotPlugin(star.Star):
             config=self._c,
             persona_model=self._persona_model,
             relationship_events=self.store.relationship_events if self.store is not None else None,
-            provider_for=self._provider_for,
+            provider_for=self.context.get_using_provider_async,
         )
         scheduler = Scheduler(runtime.store)
         capacity = CapacityService(
@@ -255,6 +269,7 @@ class AstrBotPlugin(star.Star):
             on_release=self._reload_buffer,
         )
         ingest = IngestService(
+            cache_repairs=self.cache_repairs,
             buffer=self.buffer,
             artifacts=self.store.artifacts if self.store is not None else None,
             sources=self.store.sources if self.store is not None else None,
@@ -263,8 +278,8 @@ class AstrBotPlugin(star.Star):
             graph=self.graph,
             journal=self.journal,
             config=self._c,
-            provider_for=self._provider_for,
-            owner_id=lambda: self.owner_id,
+            provider_for=self.context.get_using_provider_async,
+            owner_id=self._owner_id,
             relationship_sources=self.store.sources if self.store is not None else None,
             relationship_events=self.store.relationship_events if self.store is not None else None,
             logger=logger,
@@ -304,6 +319,7 @@ class AstrBotPlugin(star.Star):
             journal=self.journal,
             config=self._c,
             logger=logger,
+            context_writer=recall,
         )
         self.services = ServiceCollection(
             access_service=AccessService(
@@ -328,7 +344,16 @@ class AstrBotPlugin(star.Star):
         self.web.register()
         self._started = True
 
+    def _owner_id(self) -> str:
+        """Use the attention adapter's configured owner identity / 复用注意力适配器的所有者身份。"""
+        return self.attention._owner_id()
+
+    def _address_names(self) -> tuple[str, ...]:
+        """Use the attention adapter's configured names / 复用注意力适配器的称呼配置。"""
+        return self.attention._address_names()
+
     def _c(self, key: str, default):
+        """Read existing plugin configuration with its supplied fallback / 按给定回退读取既有插件配置。"""
         try:
             v = self.cfg.get(key, default)
             if v is None:
@@ -338,7 +363,7 @@ class AstrBotPlugin(star.Star):
             return default
 
     def _threshold_overrides(self) -> dict:
-        """Read ``capacity_thresholds`` as a dict or a JSON object string."""
+        """Read existing capacity overrides from a dict or JSON object / 从字典或 JSON 对象读取既有容量覆盖值。"""
         raw = self.cfg.get("capacity_thresholds", "")
         if isinstance(raw, dict):
             return raw
@@ -349,31 +374,35 @@ class AstrBotPlugin(star.Star):
         return data if isinstance(data, dict) else {}
 
     def _thresholds(self, artifact_limit: int) -> CapacityThresholds:
-        """Build capacity limits from defaults, config overrides and env keys."""
+        """Combine existing capacity defaults, overrides and environment settings / 组合既有容量默认、覆盖及环境设置。"""
         values = dict(self._threshold_overrides())
         values.setdefault("artifact_pressured_count", max(1, int(artifact_limit * 0.8)))
         values.setdefault("artifact_saturated_count", max(1, artifact_limit))
         return load_thresholds(values)
 
     def _admit_deferred(self) -> bool:
+        """Ask the existing capacity service for deferred admission / 向既有容量服务请求延后接纳决策。"""
         return self.services.capacity_service.admit_deferred()
 
     @property
     def owner_umo(self) -> str:
+        """Read the configured owner session / 读取已配置的所有者会话。"""
         return str(self._c("owner_umo", ""))
 
     @property
     def trusted_ids(self) -> set[str]:
+        """Read configured trusted sender identities / 读取已配置的可信发送者身份。"""
         raw = str(self._c("trusted", ""))
         return {x.strip() for x in raw.replace("，", ",").split(",") if x.strip()}
 
     def _init_engine(self) -> None:
+        """Construct store/cache/buffer graph resources; contain ordinary startup failure / 构造存储、缓存、缓冲及图资源，隔离普通启动失败。"""
         try:
             self.data_path.parent.mkdir(parents=True, exist_ok=True)
             self.store = open_store(str(self.data_path))
             self.cache = Cache(self.store.artifacts)
             self.cache.load()
-            self.tree = Tree(self.store.artifacts, self.cache)
+            self.tree = TreeService(self.store.artifacts, self.cache)
             self.graph = Graph(self.store.artifacts)
             self.hybrid_retriever = HybridRetriever(self.graph, self.cache)
             self.buffer = AstrBotBuffer(
@@ -390,8 +419,10 @@ class AstrBotPlugin(star.Star):
                     context={"error": self.buffer.load_error},
                 )
             self.ready = True
+            self.cache_repairs = CacheRepairs(self.store.artifacts, self.cache)
             self.checkpoint = CheckpointManager(
-                self.store.artifacts, self.cache, int(self._c("checkpoint_seconds", 1800))
+                self.store.artifacts, self.cache, int(self._c("checkpoint_seconds", 1800)),
+                cache_repairs=self.cache_repairs
             )
             self.journal.record(
                 "plugin", "ready", f"已加载 {self.cache.size()} 条有效记忆"
@@ -413,24 +444,30 @@ class AstrBotPlugin(star.Star):
             logger.error(f"[seekmemory] 初始化失败，记忆功能降级：{type(e).__name__}")
 
     def _runtime_memory_context(self, request: MemoryContextRequest) -> MemoryContext:
+        """Read disclosed memory through the pure recall entry / 通过纯召回入口读取已披露记忆。"""
         block, info = self._recall_block(
             request.query, request.session_id, request.private, request.speaker_id
         )
         return MemoryContext(text=block, info=info)
 
+    def _record_memory_context(self, context: MemoryContext) -> None:
+        """Record actual inclusion using the recall writer / 通过召回写入入口记录实际包含情况。"""
+        self.services.recall_service.record_context_injection(context.text, context.info)
+
     def _calls_path(self) -> str:
-        """调用日志路径：和数据目录放一起。"""
+        """Read the content-free call log path beside the database / 读取数据库旁的无正文调用日志路径。"""
         return str(self.data_path.parent / "calls.jsonl")
 
     async def _persona_model(self):
-        """Resolve the host provider lazily for one bounded persona call."""
+        """Resolve the existing persona provider lazily for one bounded call / 延迟解析既有人格提供方以执行一次有界调用。"""
         provider = await self.context.get_using_provider_async(self.owner_umo)
         return ProviderChatModel(provider)
 
     def _recall_block(
         self, text: str, umo: str = "", private: bool = False, speaker: str = ""
     ) -> tuple[str, dict]:
-        return self.services.recall_service.build(
+        """Query recall with the current capacity degradation input / 按当前容量降级输入查询召回。"""
+        return self.services.recall_service.query(
             text,
             umo,
             private,
@@ -439,10 +476,12 @@ class AstrBotPlugin(star.Star):
         )
 
     async def stop(self) -> None:
+        """Serialize shutdown through the lifecycle lock / 通过生命周期锁串行关闭。"""
         async with self._lifecycle_lock:
             await self._finish_stop()
 
     async def _finish_stop(self) -> None:
+        """Shield cleanup to completion before re-raising cancellation / 保护清理直至完成，再重新传播取消。"""
         cleanup = asyncio.create_task(self._stop())
         try:
             await asyncio.shield(cleanup)
@@ -451,6 +490,7 @@ class AstrBotPlugin(star.Star):
             raise
 
     async def _stop(self) -> None:
+        """Stop tasks/routes, finish writeback attempts and close owned storage in order / 按顺序停止任务及路由、完成补写尝试并关闭自有存储。"""
         self.ready = False
         operations = [
             (self.services.background_service, "stop") if self.services else (None, "stop"),
@@ -474,21 +514,24 @@ class AstrBotPlugin(star.Star):
             self.journal.record("plugin", "stopped", "plugin resources released")
         for name in (
             "services", "store", "cache", "tree", "graph", "hybrid_retriever",
-            "buffer", "checkpoint", "dream", "jobs", "web", "actions",
+            "buffer", "checkpoint", "cache_repairs", "dream", "jobs", "web", "actions",
             "episode_recorder", "action_ledger", "action_executor",
             "tool_policy", "capacity", "relationship_reader", "run_traces", "run_tracer", "trace",
         ):
             setattr(self, name, None)
+        self.hooks.reset()
         self._self_id = ""
         self._started = False
         if cancellation is not None:
             raise cancellation
 
     def _reload_buffer(self) -> None:
+        """Reload the current Source-backed projection after deferred release / 在延后释放后重载当前原始消息视图。"""
         if self.buffer is not None:
             self.buffer.reload()
 
     def _make_run_context(self, session_id: str, now: float) -> RunContext:
+        """Read latest session source and current bot identity for a background run / 读取最新会话原始消息及当前机器人身份以执行后台运行。"""
         source = self.store.sources.latest_user_source(session_id) if self.store is not None else None
         source = source or {}
         return RunContext(

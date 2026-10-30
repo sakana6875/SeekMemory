@@ -24,3 +24,33 @@ Topics are built within one session. A user and actual reply are paired through 
 importance.py uses deterministic rules to rank identity, preference, relationship, plan, privacy boundary, significant event, and user-correction signals. Assistant behavior contributes only when the same topic also has user text; assistant-only topics do not independently trigger model work. This triage is used only by Dream and does not change ordinary nightly/idle FIFO topic selection.
 
 After success, queue rows become extracted. Model or commit failures keep them pending for backoff and retry; exhausted rows become dead for management review. The original Source remains available as evidence.
+
+## Interface and file ownership
+
+`perceive/domain.py` explicitly exports supported entries; `perceive/ports.py` reuses existing app cache, Source, extraction-queue and model protocols, and declares the legacy provider call shape. Old implementation paths and helper aliases remain available. These entry files have no business implementation.
+
+| Files | Responsibility / effects | Logical complexity and coupling |
+|---|---|---|
+| `buffer.py` | Queue admission, pending projection and confirmation; legacy file coordination | Medium/high: owns the live projection, borrows repositories |
+| `buffer_policy.py` | Topic continuity, existing thresholds and ISO parsing | Low: pure input rules, no I/O |
+| `buffer_codec.py` | Legacy row conversion and Source-ID projection deduplication | Low: pure conversion |
+| `pending_file.py` | Legacy JSON file and read/write error status | Low/medium: filesystem edge, no queue/model calls |
+| `absorb.py` | Parse → validate evidence → deduplicate → construct `ExtractionPlan` | High: one pure plan owner, cache reads only; no memory writes/model calls |
+| `extraction_rules.py` | Existing subject, event-time, strength and urgency calculations | Medium: pure rules, unchanged time/algorithm behavior |
+| `dialogue_evidence.py` | Dialogue rendering and exact immutable parent reads | Medium: Source reads, never re-queue parents |
+| `extract.py` | Existing prompt construction and parser/deduplication compatibility aliases | Low: no model invocation |
+| `response_parser.py`, `duplicate_policy.py` | JSON recovery and literal identity-scoped duplicate rules | Medium: pure conversion |
+| `behavior.py`, `relationship.py` | Evidence/category and relationship observation validation | Medium: no score mutation or persistence |
+| `importance.py` | Deterministic Dream topic scoring/ranking | Medium: existing thresholds and categories, no writes |
+| `model.py` | Compatible `ProviderChatModel` provider adapter | Low: external call, timeout and cancellation; caller owns provider |
+| `compress.py`, `calls.py` | Legacy pure compression helpers and bounded content-free call logging | Separate compatibility roles; compression has no production extraction caller |
+
+The provider adapter stays at its original path to avoid an engine → adapter → engine import cycle. Prompt literals, evidence pairing, subject/scope semantics, scoring values and time conversion remain unchanged. `tests/test_perceive_interface_contract.py` and fresh top-level/plugin import-order checks protect interfaces; extraction, privacy, queue, topic and HTTP scenarios exercise behavior without live paid model calls.
+
+## Pending publication and file recovery
+
+Buffer prepares all queue rows and their existing timestamps before replacing the live projection. Repository-read or row-conversion failure preserves the prior rows and idle marker. Legacy JSON is serialized into a same-directory temporary file, closed, and atomically replaced; failure preserves the old file and removes temporary output when possible. The JSON layout and migration identity remain unchanged.
+
+Legacy add/take/topic-take/restore/confirmation save their proposed view before publishing it. A failed save raises `OSError("pending_save_failed")`, exposes `save_error`, and retains the old in-memory rows; `save()` still returns its explicit boolean result. Queue confirmation failure retains the projection, and retry consumes only the original supplied rows, preserving new input and immutable Source. Source-less confirmation uses original row identity so a newer equal row survives. These guarantees apply within the current process, not a new durable task system.
+
+`tests/test_perceive_failure_recovery.py` covers file replacement failures across five operations, failed/partial projection reloads, source-less duplicate input and queue-confirmation retries. Reverting the recovery commit requires no data migration.

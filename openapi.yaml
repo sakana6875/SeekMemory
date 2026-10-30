@@ -2,12 +2,17 @@ openapi: 3.1.0
 info:
   title: SeekMemory 管理接口
   version: 1.0.0
-  description: 描述 Context.register_web_api 注册的插件路由与 JSON 正文。实际 HTTP 前缀、管理员认证及 iframe 通信由 AstrBot 宿主负责；前端通过 AstrBotPluginPage.apiGet/apiPost
-    使用 manage/<action>，不自行拼接 URL。成功响应直接返回数据，失败使用宿主错误结构；宿主代理还可能在进入插件前拒绝请求。本契约版本独立于插件发布版本。
+  description: 宿主无关的管理操作与 JSON 正文。独立控制台通过 /api/manage/<action> 和管理员 Bearer 令牌访问；AstrBot 保留 /astrbot_plugin_seekmemory/manage/<action> 与已认证页面桥接。两种传输共用请求和响应契约，独立入口不依赖宿主请求上下文。契约版本独立于插件发布版本。
+servers:
+- url: /api
+  description: 本机独立控制台
+- url: /astrbot_plugin_seekmemory
+  description: AstrBot 管理员页面桥接
 security:
+- ConsoleAdmin: []
 - AstrBotAdmin: []
 paths:
-  /astrbot_plugin_seekmemory/manage/records:
+  /manage/records:
     get:
       operationId: records
       summary: 列出全部家族、scope 和状态的记忆
@@ -18,6 +23,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/RecordsResponse'
+        '403':
+          description: 请求来源不允许（独立控制台）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '401':
           description: 未登录管理员
           content:
@@ -48,7 +59,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
-  /astrbot_plugin_seekmemory/manage/status:
+  /manage/status:
     get:
       operationId: status
       summary: 查看引擎、模型配置与任务状态
@@ -59,6 +70,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/RuntimeStatus'
+        '403':
+          description: 请求来源不允许（独立控制台）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '401':
           description: 未登录管理员
           content:
@@ -89,7 +106,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
-  /astrbot_plugin_seekmemory/manage/detail:
+  /manage/detail:
     get:
       operationId: detail
       summary: 查看原始正文、版本、来源与账本
@@ -100,6 +117,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ArtifactDetail'
+        '403':
+          description: 请求来源不允许（独立控制台）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '401':
           description: 未登录管理员
           content:
@@ -136,7 +159,7 @@ paths:
         required: true
         schema:
           type: string
-  /astrbot_plugin_seekmemory/manage/events:
+  /manage/events:
     get:
       operationId: events
       summary: 读取最近的生命周期日志
@@ -147,6 +170,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/EventsResponse'
+        '403':
+          description: 请求来源不允许（独立控制台）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '401':
           description: 未登录管理员
           content:
@@ -196,7 +225,7 @@ paths:
         schema:
           type: string
         description: 消息或任务 ID 的子串，不区分大小写
-  /astrbot_plugin_seekmemory/manage/update:
+  /manage/update:
     post:
       operationId: update
       summary: 追加人工修订
@@ -209,6 +238,12 @@ paths:
                 $ref: '#/components/schemas/IdResponse'
         '400':
           description: 输入校验失败
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 请求来源不允许（独立控制台）
           content:
             application/json:
               schema:
@@ -262,7 +297,7 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/UpdateCommand'
-  /astrbot_plugin_seekmemory/manage/diagnose:
+  /manage/diagnose:
     post:
       operationId: diagnose
       summary: 只读预演召回
@@ -275,6 +310,12 @@ paths:
                 $ref: '#/components/schemas/Diagnostic'
         '400':
           description: 输入校验失败
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 请求来源不允许（独立控制台）
           content:
             application/json:
               schema:
@@ -328,7 +369,7 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/DiagnosticQuery'
-  /astrbot_plugin_seekmemory/manage/task:
+  /manage/task:
     post:
       operationId: task
       summary: 提交抽取或每周整理任务
@@ -341,6 +382,12 @@ paths:
                 $ref: '#/components/schemas/IdResponse'
         '400':
           description: 输入校验失败
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 请求来源不允许（独立控制台）
           content:
             application/json:
               schema:
@@ -394,7 +441,7 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/TaskCommand'
-  /astrbot_plugin_seekmemory/manage/cancel:
+  /manage/cancel:
     post:
       operationId: cancel
       summary: 取消指定的当前任务
@@ -407,6 +454,12 @@ paths:
                 $ref: '#/components/schemas/IdResponse'
         '400':
           description: 输入校验失败
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 请求来源不允许（独立控制台）
           content:
             application/json:
               schema:
@@ -460,10 +513,11 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/CancelCommand'
-  /astrbot_plugin_seekmemory/manage/traces:
+  /manage/traces:
     get:
       operationId: traces
       summary: 仅管理员读取无正文的运行轨迹
+      description: 宿主无关的运行轨迹查询。筛选在既有白名单及保留窗口内执行；时间范围按运行最后事件时间匹配，响应保留匹配运行的完整可用时间轴。无参数时保留原响应行为。查询不访问内部业务表。
       parameters:
       - name: state
         in: query
@@ -475,6 +529,31 @@ paths:
           - recalled_but_withheld
           - recalled_and_injected
           - fallback_used
+      - name: status
+        in: query
+        description: 运行结果；unknown 工具结果不推断为成功或失败。
+        schema:
+          type: string
+          enum: [all, running, completed, error, interrupted]
+          default: all
+      - name: run_id
+        in: query
+        description: 精确匹配生成的运行编号，不接受用户或会话标识。
+        schema:
+          type: string
+          pattern: ^[a-f0-9]{32}$
+      - name: since
+        in: query
+        description: 最后事件时间下界，含边界；必须含时区。
+        schema:
+          type: string
+          format: date-time
+      - name: until
+        in: query
+        description: 最后事件时间上界，含边界；必须含时区且不早于 since。
+        schema:
+          type: string
+          format: date-time
       responses:
         '200':
           description: 操作成功
@@ -484,6 +563,12 @@ paths:
                 $ref: '#/components/schemas/TracesResponse'
         '400':
           description: 请求失败
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 请求来源不允许（独立控制台）
           content:
             application/json:
               schema:
@@ -512,8 +597,612 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+  /manage/graph:
+    get:
+      operationId: graph
+      summary: 控制台 graph
+      description: 固定读取最近更新的最多 120 个节点及 240 条关联，不接收 limit 参数。前端默认显示 80 条，可选 40/80/120，切换数量和筛选仅作用于这批记忆，不重新请求。total 为数据库中 Artifact 总数。
+      responses:
+        '200':
+          description: 操作成功，直接返回数据，无额外 envelope。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GraphResponse'
+        '403':
+          description: 请求来源不允许（独立控制台）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: 未登录管理员
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: 记忆或操作不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '405':
+          description: 请求方法不支持
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: 未预期的内部错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: 记忆引擎不可用
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '400':
+          description: 输入无效或版本冲突
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: 输入无效或版本冲突
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /manage/impressions:
+    get:
+      operationId: impressions
+      summary: 控制台 impressions
+      responses:
+        '200':
+          description: 操作成功，直接返回数据，无额外 envelope。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImpressionsResponse'
+        '403':
+          description: 请求来源不允许（独立控制台）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: 未登录管理员
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: 记忆或操作不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '405':
+          description: 请求方法不支持
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: 未预期的内部错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: 记忆引擎不可用
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '400':
+          description: 输入无效或版本冲突
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: 输入无效或版本冲突
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      parameters:
+      - &id001
+        name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          maximum: 100000
+          default: 0
+  /manage/dream:
+    get:
+      operationId: dream
+      summary: 控制台 dream
+      responses:
+        '200':
+          description: 操作成功，直接返回数据，无额外 envelope。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DreamResponse'
+        '403':
+          description: 请求来源不允许（独立控制台）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: 未登录管理员
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: 记忆或操作不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '405':
+          description: 请求方法不支持
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: 未预期的内部错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: 记忆引擎不可用
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '400':
+          description: 输入无效或版本冲突
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: 输入无效或版本冲突
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /manage/packs:
+    get:
+      operationId: packs
+      summary: 控制台 packs
+      responses:
+        '200':
+          description: 操作成功，直接返回数据，无额外 envelope。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PacksResponse'
+        '403':
+          description: 请求来源不允许（独立控制台）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: 未登录管理员
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: 记忆或操作不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '405':
+          description: 请求方法不支持
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: 未预期的内部错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: 记忆引擎不可用
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '400':
+          description: 输入无效或版本冲突
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: 输入无效或版本冲突
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      parameters:
+      - name: collection
+        in: query
+        required: false
+        schema:
+          type: string
+          enum:
+          - official
+          - mine
+          default: official
+      - *id001
+  /manage/pack:
+    get:
+      operationId: pack
+      summary: 控制台 pack
+      responses:
+        '200':
+          description: 操作成功，直接返回数据，无额外 envelope。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PackResponse'
+        '403':
+          description: 请求来源不允许（独立控制台）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: 未登录管理员
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: 记忆或操作不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '405':
+          description: 请求方法不支持
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: 未预期的内部错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: 记忆引擎不可用
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '400':
+          description: 输入无效或版本冲突
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: 输入无效或版本冲突
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      parameters:
+      - name: reference
+        in: query
+        required: true
+        schema:
+          type: string
+          pattern: ^(official|mine)/[a-z0-9][a-z0-9._-]{1,63}$
+  /manage/persona:
+    post:
+      operationId: persona
+      summary: 控制台 persona
+      responses:
+        '200':
+          description: 操作成功，直接返回数据，无额外 envelope。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PersonaResult'
+        '400':
+          description: 输入无效或版本冲突
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 请求来源不允许（独立控制台）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: 未登录管理员
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: 记忆或操作不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '405':
+          description: 请求方法不支持
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: 输入无效或版本冲突
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '413':
+          description: 请求体超过 3 MiB
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: 未预期的内部错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: 记忆引擎不可用
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      requestBody:
+        required: true
+        description: 请求体最多 3 MiB；人格设定最多 64 KiB，封面最多 2 MiB。
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PersonaCommand'
+  /manage/rollbackPersona:
+    post:
+      operationId: rollbackPersona
+      summary: 将历史人格恢复为新版本，保留完整历史
+      responses:
+        '200':
+          description: 操作成功，直接返回数据，无额外 envelope。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PersonaRollbackResult'
+        '400':
+          description: 输入无效或版本冲突
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 请求来源不允许（独立控制台）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: 未登录管理员
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: 记忆或操作不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '405':
+          description: 请求方法不支持
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: 输入无效或版本冲突
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '413':
+          description: 请求体超过 64 KiB
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: 未预期的内部错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: 记忆引擎不可用
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      requestBody:
+        required: true
+        description: 请求体最多 64 KiB。
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PersonaRollbackCommand'
+  /manage/packArtwork:
+    get:
+      operationId: packArtwork
+      summary: 读取人格封面（管理员鉴权，最大 2 MiB PNG）
+      responses:
+        '200':
+          description: 操作成功，直接返回数据，无额外 envelope。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PersonaArtwork'
+        '403':
+          description: 请求来源不允许（独立控制台）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: 未登录管理员
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: 记忆或操作不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '405':
+          description: 请求方法不支持
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: 未预期的内部错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: 记忆引擎不可用
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '400':
+          description: 输入无效或版本冲突
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: 输入无效或版本冲突
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      parameters:
+      - name: reference
+        in: query
+        required: true
+        schema:
+          type: string
+          pattern: ^(official|mine)/[a-z0-9][a-z0-9._-]{1,63}$
+  /manage/packExport:
+    get:
+      operationId: packExport
+      summary: 导出完整人格包（不包含聊天来源和证据）
+      responses:
+        '200':
+          description: 操作成功，直接返回数据，无额外 envelope。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PersonaBundle'
+        '403':
+          description: 请求来源不允许（独立控制台）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: 未登录管理员
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: 记忆或操作不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '405':
+          description: 请求方法不支持
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: 未预期的内部错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: 记忆引擎不可用
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '400':
+          description: 输入无效或版本冲突
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: 输入无效或版本冲突
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      parameters:
+      - name: reference
+        in: query
+        required: true
+        schema:
+          type: string
+          pattern: ^(official|mine)/[a-z0-9][a-z0-9._-]{1,63}$
 components:
   securitySchemes:
+    ConsoleAdmin:
+      type: http
+      scheme: bearer
+      description: 独立服务从 SEEKMEMORY_CONSOLE_TOKEN 读取管理员令牌；浏览器仅在页面内存持有，不写入 URL 或本地存储。
     AstrBotAdmin:
       type: http
       scheme: bearer
@@ -677,11 +1366,17 @@ components:
             updated:
               type: string
             valid_from:
-              type: [string, 'null']
+              type:
+              - string
+              - 'null'
             valid_to:
-              type: [string, 'null']
+              type:
+              - string
+              - 'null'
             expires:
-              type: [string, 'null']
+              type:
+              - string
+              - 'null'
           additionalProperties: true
       required:
       - id
@@ -734,9 +1429,15 @@ components:
           type: integer
           minimum: 1
         oldestAt:
-          type: [string, 'null']
+          type:
+          - string
+          - 'null'
           format: date-time
-      required: [id, session, count, oldestAt]
+      required:
+      - id
+      - session
+      - count
+      - oldestAt
       additionalProperties: false
       description: 按上游话题分组的待处理消息，仅提供计数和时间，不返回对话正文。
     CapacityStatus:
@@ -744,7 +1445,11 @@ components:
       properties:
         state:
           type: string
-          enum: [normal, pressured, saturated, protective]
+          enum:
+          - normal
+          - pressured
+          - saturated
+          - protective
         actions:
           type: array
           items:
@@ -922,6 +1627,12 @@ components:
           minimum: 0
         text:
           type: string
+        origin:
+          type: string
+        synthesis:
+          type: string
+        changeReason:
+          type: string
         revisions:
           type: array
           items:
@@ -935,6 +1646,12 @@ components:
               op:
                 type: string
               text:
+                type: string
+              origin:
+                type: string
+              synthesis:
+                type: string
+              changeReason:
                 type: string
               derivedFrom:
                 type: array
@@ -951,6 +1668,13 @@ components:
             - text
             additionalProperties: false
           description: 每个版本只回溯自身历史 header 的证据；旧版本缺少证据时省略数组，不复制当前版本证据。
+        corpusCount:
+          type: integer
+          minimum: 0
+        seedId:
+          type: string
+        seedVersion:
+          type: string
       required:
       - id
       - revision
@@ -960,6 +1684,14 @@ components:
     RuntimeStatus:
       type: object
       properties:
+        capabilities:
+          type: object
+          properties:
+            maintenanceTasks:
+              type: boolean
+          required:
+          - maintenanceTasks
+          additionalProperties: false
         ready:
           type: boolean
         checks:
@@ -1019,7 +1751,10 @@ components:
             maxTopicsPerBatch:
               type: integer
               minimum: 1
-          required: [backlogThreshold, topicTtlSeconds, maxTopicsPerBatch]
+          required:
+          - backlogThreshold
+          - topicTtlSeconds
+          - maxTopicsPerBatch
           additionalProperties: false
         capacity:
           anyOf:
@@ -1038,7 +1773,9 @@ components:
           - $ref: '#/components/schemas/DreamStatus'
           - type: 'null'
         checkpointPending:
-          type: [integer, 'null']
+          type:
+          - integer
+          - 'null'
           minimum: 0
         schedulerCount:
           type: integer
@@ -1288,19 +2025,39 @@ components:
           - none
           - strict
           - loose
-        candidates: &id002
+        candidates:
           type: integer
           minimum: 0
-        picked_ids: &id001
+        picked_ids:
           type: array
           items:
             type: string
             pattern: ^[A-Za-z0-9_-]{1,96}$
           maxItems: 256
-        pinned_ids: *id001
-        artifact_ids: *id001
-        dropped_ids: *id001
-        withheld_ids: *id001
+        pinned_ids:
+          type: array
+          items:
+            type: string
+            pattern: ^[A-Za-z0-9_-]{1,96}$
+          maxItems: 256
+        artifact_ids:
+          type: array
+          items:
+            type: string
+            pattern: ^[A-Za-z0-9_-]{1,96}$
+          maxItems: 256
+        dropped_ids:
+          type: array
+          items:
+            type: string
+            pattern: ^[A-Za-z0-9_-]{1,96}$
+          maxItems: 256
+        withheld_ids:
+          type: array
+          items:
+            type: string
+            pattern: ^[A-Za-z0-9_-]{1,96}$
+          maxItems: 256
         disclosure:
           type: object
           additionalProperties:
@@ -1316,14 +2073,20 @@ components:
           - ''
           - recent_profile
           - recent_topic
-        chars: *id002
+        chars:
+          type: integer
+          minimum: 0
         gate:
           type: object
           properties:
-            evaluated: &id004
+            evaluated:
               type: boolean
-            passed: *id002
-            rejected: *id002
+            passed:
+              type: integer
+              minimum: 0
+            rejected:
+              type: integer
+              minimum: 0
             threshold:
               type: number
               minimum: 0
@@ -1349,9 +2112,11 @@ components:
     TraceEvent:
       type: object
       properties:
-        run_id: &id003
+        run_id:
           type: string
-        sequence: *id002
+        sequence:
+          type: integer
+          minimum: 0
         at:
           type: string
           format: date-time
@@ -1365,7 +2130,9 @@ components:
           - message_sent
           - tool_call
           - tool_result
-        request_index: *id002
+        request_index:
+          type: integer
+          minimum: 0
         status:
           type: string
           enum:
@@ -1378,7 +2145,8 @@ components:
           - number
           - 'null'
           minimum: 0
-        tool: *id003
+        tool:
+          type: string
         recall:
           anyOf:
           - $ref: '#/components/schemas/TraceRecall'
@@ -1397,9 +2165,12 @@ components:
     TraceRun:
       type: object
       properties:
-        id: *id003
-        started_at: *id003
-        updated_at: *id003
+        id:
+          type: string
+        started_at:
+          type: string
+        updated_at:
+          type: string
         status:
           type: string
           enum:
@@ -1407,7 +2178,8 @@ components:
           - completed
           - error
           - interrupted
-        delivered: *id004
+        delivered:
+          type: boolean
         flags:
           type: array
           items:
@@ -1417,9 +2189,17 @@ components:
             - recalled_but_withheld
             - recalled_and_injected
             - fallback_used
-        artifact_ids: *id001
-        event_count: *id002
-        partial: *id004
+        artifact_ids:
+          type: array
+          items:
+            type: string
+            pattern: ^[A-Za-z0-9_-]{1,96}$
+          maxItems: 256
+        event_count:
+          type: integer
+          minimum: 0
+        partial:
+          type: boolean
       required:
       - id
       - started_at
@@ -1450,7 +2230,8 @@ components:
           type: integer
           minimum: 1
           maximum: 365
-        persistence_error: *id004
+        persistence_error:
+          type: boolean
       required:
       - runs
       - events
@@ -1458,3 +2239,526 @@ components:
       - retention_days
       - persistence_error
       additionalProperties: false
+    GraphNode:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - kind
+      - scope
+      - subject
+      - state
+      - label
+      - createdAt
+      - updatedAt
+      - confidence
+      - protected
+      properties:
+        id:
+          type: string
+        kind:
+          type: string
+        scope:
+          type: string
+        subject:
+          type: string
+        state:
+          type: string
+        label:
+          type: string
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        protected:
+          type: boolean
+    GraphEdge:
+      type: object
+      additionalProperties: false
+      required:
+      - source
+      - target
+      - kind
+      properties:
+        source:
+          type: string
+        target:
+          type: string
+        kind:
+          type: string
+    GraphResponse:
+      type: object
+      additionalProperties: false
+      required:
+      - nodes
+      - edges
+      - total
+      - limit
+      properties:
+        nodes:
+          type: array
+          items:
+            $ref: '#/components/schemas/GraphNode'
+          maxItems: 120
+        edges:
+          type: array
+          items:
+            $ref: '#/components/schemas/GraphEdge'
+          maxItems: 240
+        total:
+          type: integer
+          minimum: 0
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 120
+    ImpressionCard:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - subjectId
+      - subjectKind
+      - displayName
+      - summary
+      - scope
+      - updatedAt
+      - confidence
+      - evidenceCount
+      - revision
+      properties:
+        id:
+          type: string
+        subjectId:
+          type: string
+        subjectKind:
+          type: string
+        displayName:
+          type: string
+        summary:
+          type: string
+        scope:
+          type: string
+        updatedAt:
+          type: string
+        confidence:
+          type: number
+        evidenceCount:
+          type: integer
+          minimum: 0
+        revision:
+          type: integer
+          minimum: 0
+    ImpressionsResponse:
+      type: object
+      additionalProperties: false
+      required:
+      - items
+      - total
+      - offset
+      - limit
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ImpressionCard'
+          maxItems: 100
+        total:
+          type: integer
+          minimum: 0
+        offset:
+          type: integer
+          minimum: 0
+        limit:
+          type: integer
+          minimum: 0
+    DreamEntry:
+      type: object
+      additionalProperties: false
+      required:
+      - date
+      - status
+      - batches
+      - written
+      - calls
+      - usageIn
+      - usageOut
+      - errorCount
+      properties:
+        date:
+          type: string
+        status:
+          type: string
+        batches:
+          type: integer
+          minimum: 0
+        written:
+          type: integer
+          minimum: 0
+        calls:
+          type: integer
+          minimum: 0
+        usageIn:
+          type: integer
+          minimum: 0
+        usageOut:
+          type: integer
+          minimum: 0
+        errorCount:
+          type: integer
+          minimum: 0
+        candidates:
+          type:
+          - integer
+          - 'null'
+          minimum: 0
+        eligible:
+          type:
+          - integer
+          - 'null'
+          minimum: 0
+        selected:
+          type:
+          - integer
+          - 'null'
+          minimum: 0
+        skipped:
+          type:
+          - integer
+          - 'null'
+          minimum: 0
+        pending:
+          type:
+          - integer
+          - 'null'
+          minimum: 0
+        stopped:
+          type: string
+    DreamResponse:
+      type: object
+      additionalProperties: false
+      required:
+      - items
+      - limit
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/DreamEntry'
+          maxItems: 100
+        limit:
+          type: integer
+          minimum: 0
+    PersonaPack:
+      type: object
+      additionalProperties: false
+      required:
+      - reference
+      - id
+      - name
+      - version
+      - description
+      - license
+      - source
+      - contentRating
+      - locale
+      properties:
+        reference:
+          type: string
+        id:
+          type: string
+        name:
+          type: string
+        version:
+          type: string
+        description:
+          type: string
+        license:
+          type: string
+        source:
+          type: string
+        contentRating:
+          type: string
+        locale:
+          type: string
+        artworkRef:
+          type:
+          - string
+          - 'null'
+          pattern: ^(official|mine)/[a-z0-9][a-z0-9._-]{1,63}@[a-f0-9]{64}$
+    PacksResponse:
+      type: object
+      additionalProperties: false
+      required:
+      - items
+      - total
+      - offset
+      - limit
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/PersonaPack'
+          maxItems: 24
+        total:
+          type: integer
+          minimum: 0
+        offset:
+          type: integer
+          minimum: 0
+        limit:
+          type: integer
+          minimum: 0
+    PersonaSeed:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - version
+      - name
+      - persona
+      properties:
+        id:
+          type: string
+          maxLength: 64
+          minLength: 1
+          pattern: ^[a-z0-9][a-z0-9._-]{1,63}$
+        version:
+          type: string
+          maxLength: 32
+          minLength: 1
+        name:
+          type: string
+          maxLength: 80
+          minLength: 1
+        persona:
+          type: string
+          maxLength: 20000
+          minLength: 1
+        license:
+          type: string
+          maxLength: 200
+        source:
+          type: string
+          maxLength: 200
+        content_rating:
+          type: string
+          maxLength: 32
+        locale:
+          type: string
+          maxLength: 20
+        style:
+          type: object
+          additionalProperties: true
+        boundaries:
+          type: array
+          items:
+            type: string
+            maxLength: 300
+          maxItems: 32
+        corpus:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required:
+            - user
+            - assistant
+            properties:
+              user:
+                type: string
+                minLength: 1
+                maxLength: 2000
+              assistant:
+                type: string
+                minLength: 1
+                maxLength: 2000
+          maxItems: 128
+          description: When supplied, requires >=12 pairs and >=1200 total trimmed characters.
+            Backend canonical validation is authoritative.
+    PackResponse:
+      type: object
+      additionalProperties: false
+      required:
+      - seed
+      - digest
+      properties:
+        digest:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        seed:
+          $ref: '#/components/schemas/PersonaSeed'
+        licenseText:
+          type: string
+          maxLength: 65536
+    PersonaCommand:
+      oneOf:
+      - type: object
+        additionalProperties: false
+        required:
+        - operation
+        - reference
+        - expectedId
+        - expectedRevision
+        - expectedDigest
+        - confirmed
+        properties:
+          operation:
+            const: install
+          reference:
+            type: string
+          expectedDigest:
+            type: string
+            pattern: ^[a-f0-9]{64}$
+          expectedId:
+            type:
+            - string
+            - 'null'
+          expectedRevision:
+            type: integer
+            minimum: 0
+          confirmed:
+            const: true
+      - type: object
+        additionalProperties: false
+        required:
+        - operation
+        - seed
+        - confirmed
+        properties:
+          operation:
+            const: import
+          seed:
+            $ref: '#/components/schemas/PersonaSeed'
+          confirmed:
+            const: true
+          expectedVersion:
+            type: string
+      - type: object
+        additionalProperties: false
+        required:
+        - operation
+        - reference
+        - confirmed
+        properties:
+          operation:
+            const: remove
+          reference:
+            type: string
+          confirmed:
+            const: true
+      - type: object
+        additionalProperties: false
+        required:
+        - operation
+        - pack
+        - confirmed
+        properties:
+          operation:
+            const: importPack
+          pack:
+            $ref: '#/components/schemas/PersonaBundle'
+          confirmed:
+            const: true
+          expectedVersion:
+            type: string
+    PersonaResult:
+      oneOf:
+      - type: object
+        additionalProperties: false
+        required:
+        - reference
+        properties:
+          reference:
+            type: string
+      - type: object
+        additionalProperties: false
+        required:
+        - id
+        - revision
+        - seedId
+        - seedVersion
+        properties:
+          id:
+            type: string
+          revision:
+            type: integer
+            minimum: 0
+          seedId:
+            type: string
+          seedVersion:
+            type: string
+    PersonaRollbackCommand:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - revision
+      - reason
+      - confirmed
+      properties:
+        id:
+          type: string
+        revision:
+          type: integer
+          minimum: 1
+        reason:
+          type: string
+          pattern: ^\s*\S[\s\S]*$
+          description: 去除首尾空白后为 1–300 字符。
+        confirmed:
+          const: true
+    PersonaRollbackResult:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - revision
+      - restoredRevision
+      properties:
+        id:
+          type: string
+        revision:
+          type: integer
+          minimum: 1
+        restoredRevision:
+          type: integer
+          minimum: 1
+    PersonaArtwork:
+      type: object
+      additionalProperties: false
+      required:
+      - mediaType
+      - dataBase64
+      properties:
+        mediaType:
+          const: image/png
+        dataBase64:
+          type: string
+          minLength: 1
+          maxLength: 2796204
+          pattern: ^[A-Za-z0-9+/]+={0,2}$
+    PersonaBundle:
+      type: object
+      additionalProperties: false
+      required:
+      - format
+      - seed
+      - licenseText
+      - artwork
+      properties:
+        format:
+          const: seekmemory.persona-pack/v1
+        seed:
+          $ref: '#/components/schemas/PersonaSeed'
+        licenseText:
+          type: string
+          maxLength: 65536
+        artwork:
+          oneOf:
+          - $ref: '#/components/schemas/PersonaArtwork'
+          - type: 'null'

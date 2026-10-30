@@ -1,0 +1,13 @@
+fish.svg — Original vector illustration authored for SeekMemory, 2026.
+Available under the repository's MIT / Apache-2.0 license options.
+The original SVG is retained as an unused fallback asset.
+
+
+ds-chibi-head.webp — AI-generated DeepSeek-inspired fan character head.
+Generated 2026-10-27 with the user-configured XEM Image API, model gpt-image-2.5.
+The user supplied two Grokbot-style head references and one DeepSeek character
+sheet, used as style/identity inputs. Reference files are not bundled here.
+The generated illustration is not official DeepSeek artwork. No ownership or
+license claim is made over the reference images or associated character rights.
+The CC0 label on a persona pack describes its seed data, not this UI illustration.
+See ds-chibi-head.prompt.txt for the generation instructions.

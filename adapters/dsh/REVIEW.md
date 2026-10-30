@@ -13,7 +13,7 @@
 DSH 插件                              内核（Python）
   session/event  ──► POST /capture    ──► 写 Source
   agent/pre-step ──► POST /recall     ──► 本地 BM25 + 披露，0 次模型调用
-  GET /extract/plan ◄─ 取任务          
+  GET /extract/plan ◄─ 取任务
   宿主 ctx.llm.stream ──► 调模型      （凭据和记账都留在宿主）
   POST /extract/commit ──►            ──► 解析 + 原子提交
 ```

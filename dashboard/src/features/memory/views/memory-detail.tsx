@@ -9,7 +9,7 @@ import {
 import { Badge, Button, Tabs } from "@/ui"
 import type { MemoryRecord } from "../model"
 import { useMemoryDetail } from "../use-memory-detail"
-import { categoryLabels, memoryDateFormat } from "./presentation"
+import { categoryLabels, memoryDateFormat, scopeLabels } from "./presentation"
 
 interface MemoryDetailProps {
   memory: MemoryRecord
@@ -131,11 +131,7 @@ export function MemoryDetail({
                     ) : (
                       <Users className="size-3.5" />
                     )}
-                    {
-                      { private: "私有", shared: "共享", shadow: "影子" }[
-                        memory.scope
-                      ]
-                    }
+                    {scopeLabels[memory.scope]}
                   </dd>
                   <dt className="text-muted-foreground">召回次数</dt>
                   <dd className="text-right tabular-nums">{memory.hits} 次</dd>

@@ -3,6 +3,7 @@ import type {
   ApiRequest,
   ApiResponse,
   ApiSchemas,
+  TraceQuery,
 } from "../../contracts/api.ts"
 import type { MemoryRecord } from "../memory/model.ts"
 import type { TraceSnapshot } from "./trace-model.ts"
@@ -38,10 +39,14 @@ export const personaRevisionSchema = z.object({
   at: z.string(),
   op: z.string(),
   text: z.string(),
+  origin: z.string().exactOptional(),
+  synthesis: z.string().exactOptional(),
+  changeReason: z.string().exactOptional(),
   derivedFrom: z.array(z.string()).default([]),
   sourceIds: z.array(z.string()).default([]),
 })
 export const statusSchema = z.object({
+  capabilities: z.object({ maintenanceTasks: z.boolean() }).exactOptional(),
   ready: z.boolean(),
   checks: z.array(
     z.object({ name: z.string(), ok: z.boolean(), detail: z.string() })
@@ -89,6 +94,12 @@ export const statusSchema = z.object({
       id: z.string(),
       revision: z.number().int().nonnegative(),
       text: z.string(),
+      origin: z.string().exactOptional(),
+      synthesis: z.string().exactOptional(),
+      changeReason: z.string().exactOptional(),
+      seedId: z.string().exactOptional(),
+      seedVersion: z.string().exactOptional(),
+      corpusCount: z.number().int().nonnegative().exactOptional(),
       revisions: z.array(personaRevisionSchema),
     })
     .nullable()
@@ -165,7 +176,8 @@ export type UpdateCommand = z.infer<typeof updateSchema>
 export type DiagnosticQuery = ApiRequest<"diagnose">
 
 export interface ManagementClient {
-  traces(): Promise<TraceSnapshot>
+  console?: import("../shell/model.ts").ConsoleClient
+  traces(query?: TraceQuery): Promise<TraceSnapshot>
   records(): Promise<readonly MemoryRecord[]>
   status(): Promise<RuntimeStatus>
   detail(id: string): Promise<ArtifactDetail>

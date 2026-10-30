@@ -1,12 +1,11 @@
 import { useState } from "react"
+import { Button, DetailDrawer, Select } from "@/ui"
+import { systemSections } from "../sections"
+import { FilterChoices } from "@/features/memory/views/memory-filters"
 import {
-  Activity,
-  BookOpen,
-  FlaskConical,
-  RefreshCw,
-  ScrollText,
-} from "lucide-react"
-import { Badge, Button, DetailDrawer, Select } from "@/ui"
+  scopeLabels,
+  scopeDescriptions,
+} from "@/features/memory/views/presentation"
 import { MemoryWorkspace } from "@/features/memory/views/memory-workspace"
 import type { ManagementClient } from "../model"
 import { useControl } from "../use-control"
@@ -16,57 +15,27 @@ import { LogView } from "./log-view"
 import { RuntimePanel } from "./runtime-panel"
 import { RunTraces } from "./run-traces"
 
-const sections = [
-  { id: "memory", label: "记忆库", icon: BookOpen },
-  { id: "runtime", label: "运行与任务", icon: Activity },
-  { id: "diagnose", label: "召回诊断", icon: FlaskConical },
-  { id: "logs", label: "生命周期日志", icon: ScrollText },
-  { id: "traces", label: "运行轨迹", icon: Activity },
-] as const
-
 const actionLabels = {
   extract: "立即抽取",
   weekly: "每周整理",
   cancel: "取消任务",
 }
 
-export function ControlWorkspace({ client }: { client: ManagementClient }) {
+export function ControlWorkspace({
+  client,
+  initialSection,
+  initialRun,
+}: {
+  client: ManagementClient
+  initialSection?: string | undefined
+  initialRun?: string
+}) {
   const vm = useControl(client)
-  const [section, setSection] =
-    useState<(typeof sections)[number]["id"]>("memory")
+  const section =
+    systemSections.find((item) => item.id === initialSection)?.id ?? "memory"
   const [editorId, setEditorId] = useState<string | null>(null)
   return (
-    <div className="flex min-h-svh flex-col bg-background">
-      <header className="flex flex-wrap items-center justify-between gap-3 border-b bg-card px-4 py-3 sm:px-6">
-        <nav aria-label="工作台导航" className="flex flex-wrap gap-1">
-          {sections.map(({ id, label, icon: Icon }) => (
-            <Button
-              key={id}
-              variant={section === id ? "default" : "ghost"}
-              aria-pressed={section === id}
-              onClick={() => setSection(id)}
-            >
-              <Icon className="size-4" />
-              {label}
-            </Button>
-          ))}
-        </nav>
-        <div className="flex items-center gap-3">
-          <Badge tone={vm.status?.ready ? "success" : "warning"}>
-            {vm.status?.ready ? "引擎就绪" : "等待连接"}
-          </Badge>
-          <Button
-            variant="ghost"
-            aria-label="刷新工作台"
-            onClick={() => {
-              void vm.refresh()
-            }}
-          >
-            <RefreshCw className="size-4" />
-            刷新
-          </Button>
-        </div>
-      </header>
+    <div className="flex min-h-full flex-col">
       {vm.error && (
         <p
           role="alert"
@@ -76,42 +45,75 @@ export function ControlWorkspace({ client }: { client: ManagementClient }) {
         </p>
       )}
       {section === "memory" && (
-        <>
-          <div className="flex flex-wrap items-center gap-3 border-b px-5 py-3 text-xs">
-            <span className="text-muted-foreground">管理范围</span>
-            <Select
-              label="筛选 scope"
-              value={vm.scope}
-              onValueChange={vm.setScope}
-              options={[
-                { value: "all", label: "全部 scope" },
-                { value: "private", label: "私有" },
-                { value: "shared", label: "共享" },
-                { value: "shadow", label: "影子" },
-              ]}
-            />
-            <Select
-              label="筛选来源会话"
-              className="max-w-80"
-              value={vm.session}
-              onValueChange={vm.setSession}
-              options={[
-                { value: "all", label: "全部来源会话" },
-                ...vm.sessions.map((value) => ({ value, label: value })),
-              ]}
-            />
-            <span className="text-muted-foreground">
-              管理员可查看所有家族；筛选不改变机器人访问权限。
-            </span>
-          </div>
-          <MemoryWorkspace
-            source={vm.source}
-            onRetry={() => {
-              void vm.refresh()
-            }}
-            onInspect={setEditorId}
-          />
-        </>
+        <MemoryWorkspace
+          source={vm.source}
+          onRetry={() => {
+            void vm.refresh()
+          }}
+          onInspect={setEditorId}
+          filters={{
+            selections: [
+              ...(vm.scope === "all"
+                ? []
+                : [
+                    {
+                      label: `范围：${scopeLabels[vm.scope]}`,
+                      onClear: () => vm.setScope("all"),
+                    },
+                  ]),
+              ...(vm.session === "all"
+                ? []
+                : [
+                    {
+                      label: `会话：${vm.session}`,
+                      onClear: () => vm.setSession("all"),
+                    },
+                  ]),
+            ],
+            onReset: () => {
+              vm.setScope("all")
+              vm.setSession("all")
+            },
+            controls: (
+              <>
+                <FilterChoices
+                  label="使用范围"
+                  value={vm.scope}
+                  onChange={vm.setScope}
+                  options={[
+                    { value: "all", label: "不限范围" },
+                    ...(["private", "shared", "shadow"] as const).map(
+                      (value) => ({
+                        value,
+                        label: scopeLabels[value],
+                        description: scopeDescriptions[value],
+                      })
+                    ),
+                  ]}
+                />
+                <div>
+                  <label
+                    htmlFor="memory-session-filter"
+                    className="mb-3 block text-sm font-medium"
+                  >
+                    来源会话
+                  </label>
+                  <Select
+                    id="memory-session-filter"
+                    label="筛选来源会话"
+                    className="w-full max-w-full"
+                    value={vm.session}
+                    onValueChange={vm.setSession}
+                    options={[
+                      { value: "all", label: "全部来源会话" },
+                      ...vm.sessions.map((value) => ({ value, label: value })),
+                    ]}
+                  />
+                </div>
+              </>
+            ),
+          }}
+        />
       )}
       {section === "runtime" && (
         <RuntimePanel
@@ -122,9 +124,13 @@ export function ControlWorkspace({ client }: { client: ManagementClient }) {
         />
       )}
       {section === "diagnose" && <Diagnostics client={client} />}
-      {section === "logs" && <LogView events={vm.events} />}
+      {section === "logs" && <LogView client={client} />}
       {section === "traces" && (
-        <RunTraces client={client} onInspect={setEditorId} />
+        <RunTraces
+          client={client}
+          onInspect={setEditorId}
+          initialRun={initialRun ?? ""}
+        />
       )}
       <ArtifactEditor
         key={editorId}

@@ -28,7 +28,7 @@ export function Diagnostics({ client }: { client: ManagementClient }) {
       <div className="workspace-intro">
         <h1 className="text-2xl font-semibold">召回诊断</h1>
         <p className="mt-2 text-sm text-muted-foreground">
-          使用现有 scope 和召回规则，只读预演，不调用模型、不消耗指定交付。
+          只读预演，不调用模型或修改记忆。
         </p>
       </div>
       <div className="surface-panel space-y-4 p-6">

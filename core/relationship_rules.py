@@ -1,4 +1,4 @@
-"""Pure, versioned rules for relationship evidence consolidation."""
+"""Replay independently verified Source events into pure relationship snapshots."""
 
 from __future__ import annotations
 import hashlib
@@ -10,8 +10,13 @@ from typing import Iterable
 
 from .relationship import RELATIONSHIP_POLICY_VERSION, RelationshipSnapshot
 
+VERIFIER_VERSION = "relationship-verifier-v2"
 
 class RelationshipSignal(str, Enum):
+    """Define derived relationship signal categories.
+
+    定义派生关系信号类别。
+    """
     POSITIVE = "positive"
     NEGATIVE = "negative"
     REPAIR = "repair"
@@ -19,6 +24,10 @@ class RelationshipSignal(str, Enum):
 
 
 class RelationshipReason(str, Enum):
+    """Define the supported categorical evidence reasons.
+
+    定义受支持的分类证据原因。
+    """
     FRIENDLY_GREETING = "friendly_greeting"
     GRATITUDE = "gratitude"
     CARE = "care"
@@ -32,11 +41,19 @@ class RelationshipReason(str, Enum):
 
 
 class RelationshipStrength(str, Enum):
+    """Define mild and strong evidence categories.
+
+    定义轻度及强烈证据类别。
+    """
     MILD = "mild"
     STRONG = "strong"
 
 
 class ConversationScope(str, Enum):
+    """Define private, group and unknown observation scopes.
+
+    定义私聊、群聊及未知观察范围。
+    """
     PRIVATE = "private"
     GROUP = "group"
     UNKNOWN = "unknown"
@@ -44,6 +61,7 @@ class ConversationScope(str, Enum):
 
 @dataclass(frozen=True)
 class EvidenceRule:
+    """Classify a proposed event; never provide a score or interaction permission."""
     signal: RelationshipSignal
 
 
@@ -63,6 +81,7 @@ EVIDENCE_RULES: dict[RelationshipReason, EvidenceRule] = {
 
 @dataclass(frozen=True)
 class RelationshipCandidate:
+    """Carry categorical Source-backed evidence pending independent verification."""
     subject_id: str
     reason: RelationshipReason
     strength: RelationshipStrength
@@ -75,7 +94,6 @@ class RelationshipCandidate:
 
 
 
-VERIFIER_VERSION = "relationship-verifier-v2"
 
 
 def relationship_event_id(candidate: RelationshipCandidate) -> str:
@@ -143,7 +161,8 @@ def project_relationship(events: Iterable[VerifiedRelationshipEvent], as_of: dat
         if event.event_at.tzinfo is None or event.event_at.utcoffset() is None:
             raise ValueError("relationship evidence requires a timezone")
         if (event.event_at <= as_of and event.subject_id and event.primary_source_id
-                and event.primary_source_id in event.source_ids and event.event_id):
+                and event.primary_source_id in event.source_ids and event.event_id
+                and event.scope in (ConversationScope.PRIVATE, ConversationScope.GROUP)):
             chosen.append(event)
     chosen.sort(key=_event_key)
     if len({event.subject_id for event in chosen}) > 1:
@@ -167,32 +186,29 @@ def project_relationship(events: Iterable[VerifiedRelationshipEvent], as_of: dat
         if (len(reasons_by_primary[event.primary_source_id]) != 1
                 or len(ids[event.event_id]) != 1 or not all(sources)):
             continue
+        prior = negatives.get(event.repair_of) if event.reason is RelationshipReason.REPAIR else None
+        if event.reason is RelationshipReason.REPAIR and (
+            prior is None or prior.subject_id != event.subject_id or prior.event_at >= event.event_at
+            or event.primary_source_id in used_sources
+        ):
+            continue
         overlap = sources & used_sources
-        if overlap:
-            prior = negatives.get(event.repair_of) if event.reason == RelationshipReason.REPAIR else None
-            if (prior is None or prior.subject_id != event.subject_id
-                    or prior.event_at >= event.event_at or event.primary_source_id in used_sources
-                    or not overlap <= set(prior.source_ids)):
-                continue
+        if overlap and (prior is None or not overlap <= set(prior.source_ids)):
+            continue
         accepted.append(event)
         used_sources.update(sources)
         if event.reason in _NEGATIVE_IMPACT:
             negatives[event.event_id] = event
     linked = {
         event.event_id: negatives[event.repair_of]
-        for event in accepted if event.reason == RelationshipReason.REPAIR
-        and event.repair_of in negatives
-        and negatives[event.repair_of].event_at < event.event_at
-        and negatives[event.repair_of].subject_id == event.subject_id
+        for event in accepted if event.reason is RelationshipReason.REPAIR
     }
-    accepted = [event for event in accepted if event.reason != RelationshipReason.REPAIR or event.event_id in linked]
     if not accepted:
         return RelationshipSnapshot(evaluated_at=evaluated_at)
 
     scope_weights = {
         ConversationScope.PRIVATE: policy.private_weight,
         ConversationScope.GROUP: policy.group_weight,
-        ConversationScope.UNKNOWN: policy.unknown_weight,
     }
     familiarity_total = confidence_total = warmth_total = trust_total = 0.0
     tension_by_negative: dict[str, float] = {}
@@ -254,6 +270,11 @@ def project_relationship(events: Iterable[VerifiedRelationshipEvent], as_of: dat
 
 @dataclass(frozen=True)
 class RelationshipScoringPolicy:
+    """Hold resolved scoring settings; parse configuration outside core.
+
+    保存已解析评分设置，在 core 外解析配置。
+    """
+
     version: str = RELATIONSHIP_POLICY_VERSION
     verifier_version: str = VERIFIER_VERSION
     learning_rate: float = 0.25
@@ -269,8 +290,8 @@ class RelationshipScoringPolicy:
     negative_cooldown_hours: float = 24
 
     def __post_init__(self) -> None:
-        if not isinstance(self.version, str) or not self.version.strip():
-            raise ValueError("relationship policy version is required")
+        if self.version != RELATIONSHIP_POLICY_VERSION or self.verifier_version != VERIFIER_VERSION:
+            raise ValueError("unsupported relationship policy version")
         for name in (
             "learning_rate", "private_weight", "group_weight", "unknown_weight",
             "familiarity_half_life_days", "trust_half_life_days", "warmth_half_life_days",

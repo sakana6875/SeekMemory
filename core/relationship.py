@@ -1,12 +1,11 @@
-"""Replayable relationship snapshots."""
+"""Pure replayable relationship snapshots; no interaction or storage decisions."""
 
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
 import math
+from dataclasses import dataclass
 from typing import Any, Mapping
-
 
 RELATIONSHIP_POLICY_VERSION = "relationship-v2"
 SUMMARY = "关系状态：观察中"
@@ -14,6 +13,8 @@ SUMMARY = "关系状态：观察中"
 
 @dataclass(frozen=True)
 class RelationshipSnapshot:
+    """Carry a content-free, six-dimensional observe-only relationship view."""
+
     subject_id: str = ""
     familiarity: float = 0.0
     trust: float = 0.0
@@ -29,13 +30,18 @@ class RelationshipSnapshot:
 
 
 def relationship_id(subject_id: str) -> str:
-    digest = hashlib.sha256(str(subject_id or "").encode("utf-8")).hexdigest()[:24]
+    """Return the stable opaque Artifact ID for one person's relationship."""
+    subject = str(subject_id or "").strip()
+    if not subject:
+        raise ValueError("relationship subject_id is required")
+    digest = hashlib.sha256(subject.encode("utf-8")).hexdigest()[:24]
     return f"relationship_{digest}"
+
 
 def snapshot_from_payload(
     payload: Mapping[str, Any], *, subject_id: str, artifact_id: str, revision: int,
 ) -> RelationshipSnapshot:
-    """Return only a validated content-free V2 snapshot from an Artifact."""
+    """Read only valid V2 dimensions; V1 or malformed data cannot affect the view."""
     if not isinstance(payload, Mapping):
         raise ValueError("relationship payload must be a mapping")
     policy = payload.get("policy")

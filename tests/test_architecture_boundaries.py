@@ -72,6 +72,11 @@ class MainOwnershipTest(unittest.TestCase):
             self.assertIn(f"{name} = _HOOKS[\"{name}\"]", self.source)
         self.assertNotIn("locals().update", self.source)
 
+    def test_each_hook_wrapper_has_a_unique_name(self) -> None:
+        """AstrBot 用 module+__name__ 生成 handler 唯一名，闭包同名会互相覆盖。"""
+        hooks_source = (ROOT / "adapters" / "astrbot" / "registration.py").read_text()
+        self.assertIn("handler.__name__ = name", hooks_source)
+
     def test_service_collection_is_a_typed_bundle(self) -> None:
         from dataclasses import fields
         from services.service_collection import ServiceCollection
@@ -99,7 +104,7 @@ class MainOwnershipTest(unittest.TestCase):
         ))
 
     def test_start_jobs_remains_the_astrbot_loaded_hook(self) -> None:
-        hooks = (ROOT / "adapters" / "astrbot" / "hooks.py").read_text(
+        hooks = (ROOT / "adapters" / "astrbot" / "registration.py").read_text(
             encoding="utf-8"
         )
         self.assertIn('"start_jobs": _register(', hooks)
@@ -269,7 +274,10 @@ class LayerDependencyTest(unittest.TestCase):
                        "perceive", "maintain", "webui"):
             for path in (ROOT / folder).rglob("*.py"):
                 source = path.read_text(encoding="utf-8")
-                if "perceive.absorb import" in source or "from .absorb import" in source:
+                tree = ast.parse(source, filename=str(path))
+                if any(isinstance(node, ast.Call)
+                       and isinstance(node.func, ast.Name)
+                       and node.func.id == "build_plan" for node in ast.walk(tree)):
                     callers.append(path)
         self.assertEqual(callers, [ROOT / "services" / "ingest_service.py"])
 
@@ -313,7 +321,7 @@ class LayerDependencyTest(unittest.TestCase):
         )
         for fragment in (
             "async def extract(", "build_plan(", ".commit(",
-            "cache.put(", "link_new(", "revise_impression(", "self._supersede(",
+            "_cache_repairs.repair(", "link_new(", "revise_impression(", "self._supersede(",
         ):
             self.assertIn(fragment, source)
 

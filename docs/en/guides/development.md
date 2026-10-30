@@ -26,24 +26,36 @@ Start the local preview (default address: http://127.0.0.1:8000):
 
 Run a strict build:
 
+    python3 scripts/check_docs_structure.py
     mkdocs build --strict
+
+The structure check validates navigation, mirrored page sets and relative Markdown file links; the strict build checks whether the site can be generated with its current configuration. Neither automatically verifies that prose matches code. If the `material` theme is missing, install the docs dependencies above; missing dependencies do not constitute a successful build.
 
 ## Backend test layers
 
-The runner uses tests/layers.py to group flat unittest files by responsibility. Choose the needed scope for a change:
+The runner uses tests/layers.py to classify flat unittest files; explicit `_unit.py`, `_integration.py` and other layer suffixes override legacy names. Each file runs through unittest discovery in an isolated process, including definitions after `__main__`, so host fakes do not leak between files. All files run and any failure makes the command fail. Legacy files can still span modules; layer names do not guarantee fully isolated dependencies. Choose the needed scope for a change:
 
     python3 scripts/run_tests.py --layer unit
     python3 scripts/run_tests.py --layer contract
+    python3 scripts/run_tests.py --layer conformance
     python3 scripts/run_tests.py --layer integration
     python3 scripts/run_tests.py --layer host
     python3 scripts/run_tests.py --layer smoke
     python3 scripts/run_tests.py --layer all
 
-The compatibility command for all test files is:
+All files can also be discovered in one process; host fakes may affect optional host tests in that process, so use the isolated runner above for host acceptance:
 
     python3 -m unittest discover -s tests -p 'test_*.py' -q
 
-Tests cannot establish real-model extraction quality by themselves. Host behavior also needs an AstrBot environment; model evaluation and capacity probes are separate manual workflows. See [benchmarks/README.md](../../../benchmarks/README.md).
+For capability-specific core checks, see [core verification entry points and evidence limits](../architecture/modules/core.md#core-verification): it lists current tests and focused commands, distinguishing pure rules from complete flows. Export checks do not establish complete behavioral coverage of all exported operations.
+
+Tests cannot establish real-model extraction quality by themselves. Host behavior also needs an AstrBot environment. Benchmarks measure different things from tests: fixed memory regression uses one evaluator and a frozen baseline to reject per-query regressions with nonzero status; the historical composite is not a gate, and BM25 has separate frozen acceptance checks. Character counts are not tokens or cost. Definitions and limits are in [benchmarks/README.md](../../../benchmarks/README.md).
+
+## Offline scripts and artifacts
+
+`scripts/snapshot_db.py` creates a consistent backup including WAL, closes connections before atomic publication and preserves the old backup on failure; the source cannot be the destination. Persona bootstrap, pending migration and relationship rollback scripts close their own stores. The runtime-service creator closes its listener even if endpoint metadata cannot be saved.
+
+Ordinary memory, scale and ablation reports use new ignored run directories without replacing history. Release packaging produces a local artifact and does not authorize release or deployment.
 
 ## Dashboard
 
@@ -71,3 +83,22 @@ check includes generated-type freshness, TypeScript, lint, frontend tests, and f
 - When event flow, service composition, or a host boundary changes, update the overview and related module page.
 - Documentation should describe behavior confirmed by current code. Work plans and review history belong in GitHub Issues/PRs, not local RFC or per-work records in docs.
 - Chinese and English pages are mirrored under docs/zh and docs/en; site navigation lives in mkdocs.yml, and scripts/check_docs_structure.py validates the page structure.
+
+## Persona console preview and packs
+
+The Mock console uses hash routes such as #/home, #/studio, #/memory,
+#/store, #/dream and #/system?section=traces. The preview selector includes
+loading, empty, error and a 1,000-node/2,000-edge stress fixture. Preview
+install/import/edit actions affect memory-only fixtures. dev:host uses the
+authenticated AstrBot page bridge; dev:standalone uses the real local HTTP API.
+Production builds work with either the standalone server or AstrBot. See
+[local console operations](webui.md#local-standalone-console) for startup and tokens.
+Frontend tests start a temporary Python API; SEEKMEMORY_TEST_PYTHON selects a Python 3.10+ interpreter.
+
+Bundled persona files live at persona_seeds/&lt;id&gt;/persona.json. Add the ID to
+index.json, include a LICENSE and follow the [persona seed guide](persona-seed.md).
+Local imports go under the plugin data directory's persona_packs/. Removal moves
+a pack to .trash and leaves the active persona unchanged. Recover a removed
+blueprint by importing its backup JSON after checking the ID and version.
+To replace a same-ID file, supply its current version during import confirmation.
+Updating a blueprint never installs it automatically.

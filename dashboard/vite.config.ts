@@ -23,12 +23,18 @@ export default defineConfig({
         this.emitFile({
           type: "asset",
           fileName: "ASSET-LICENSES.txt",
-          source: licenses
-            .map(
-              ([name, file]) =>
-                `${name}\n\n${readFileSync(resolve(import.meta.dirname, "node_modules", name, file), "utf8")}`
-            )
-            .join("\n\n"),
+          source:
+            licenses
+              .map(
+                ([name, file]) =>
+                  `${name}\n\n${readFileSync(resolve(import.meta.dirname, "node_modules", name, file), "utf8")}`
+              )
+              .join("\n\n") +
+            "\n\n" +
+            readFileSync(
+              resolve(import.meta.dirname, "src/assets/LICENSES.txt"),
+              "utf8"
+            ),
         })
       },
     },

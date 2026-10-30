@@ -1,0 +1,328 @@
+.console-map-page .console-page-intro {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+.constellation-layers {
+  display: flex;
+  gap: 6px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  padding-bottom: 6px;
+  margin-bottom: 12px;
+}
+.constellation-layers button {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 8px 13px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  transition:
+    background 180ms,
+    border-color 180ms;
+}
+.constellation-layers button[aria-pressed="true"] {
+  background: var(--surface-glass);
+  border-color: var(--glass-border);
+  color: var(--foreground);
+  box-shadow: inset 0 1px var(--glass-highlight);
+}
+.constellation-layers button:hover {
+  background: var(--secondary);
+}
+.constellation-layers button:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.constellation-layers i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+.constellation-surface {
+  overflow: hidden;
+}
+.constellation-surface .star-canvas {
+  height: clamp(390px, 64vh, 760px);
+  background: transparent;
+  isolation: isolate;
+}
+.constellation-surface .map-status {
+  border-bottom: 0;
+  color: var(--muted-foreground);
+}
+.constellation-surface .map-selection {
+  min-height: 76px;
+  background: var(--surface-glass);
+}
+.constellation-surface .star-controls {
+  bottom: 18px;
+  right: 18px;
+}
+@media (max-width: 720px) {
+  .console-map-page {
+    padding-inline: 14px;
+  }
+  .console-map-page .console-page-intro {
+    flex-wrap: wrap;
+  }
+  .constellation-layers {
+    gap: 2px;
+  }
+  .constellation-layers button {
+    padding: 7px 10px;
+  }
+  .constellation-surface .map-status {
+    padding: 12px;
+    flex-wrap: wrap;
+  }
+  .constellation-surface .map-selection {
+    padding: 12px;
+  }
+}
+.sphere-annotation {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.sphere-leader {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+.sphere-leader path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1;
+  opacity: 0.65;
+  stroke-dasharray: 260;
+  animation: sphere-trace 320ms ease-out both;
+}
+.sphere-callout {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: min(260px, calc(100% - 24px));
+  border: 1px solid var(--glass-border);
+  border-left: 2px solid currentColor;
+  border-radius: 3px 12px 12px 3px;
+  background: var(--surface-glass-strong, var(--card));
+  box-shadow: 0 8px 28px color-mix(in srgb, var(--foreground) 6%, transparent);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  animation: sphere-reveal 240ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.sphere-callout-kind {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 11px 14px 8px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  border-bottom: 1px solid var(--glass-border);
+  color: var(--foreground);
+}
+.sphere-callout-kind i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.map-list-item {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  padding: 10px 12px;
+  text-align: left;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--foreground);
+  background: var(--card);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.map-list-item:hover,
+.map-list-item[aria-pressed="true"] {
+  background: var(--secondary);
+}
+.map-list-item:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.sphere-callout-kind span {
+  margin-left: auto;
+  letter-spacing: 0;
+  color: var(--muted-foreground);
+}
+.sphere-callout p {
+  margin: 0;
+  padding: 11px 14px 14px;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--foreground);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  overflow-wrap: anywhere;
+}
+@keyframes sphere-reveal {
+  from {
+    opacity: 0;
+    clip-path: inset(0 100% 0 0);
+  }
+  to {
+    opacity: 1;
+    clip-path: inset(0);
+  }
+}
+@keyframes sphere-trace {
+  from {
+    stroke-dashoffset: 260;
+    opacity: 0;
+  }
+  to {
+    stroke-dashoffset: 0;
+    opacity: 0.65;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sphere-callout,
+  .sphere-leader path {
+    animation: none;
+  }
+}
+@media (max-width: 720px) {
+  .constellation-surface .star-canvas {
+    height: clamp(360px, 58vh, 540px);
+  }
+  .sphere-callout {
+    width: min(220px, calc(100% - 24px));
+  }
+  .constellation-surface .map-status {
+    font-size: 11px;
+    gap: 4px;
+  }
+  .constellation-surface .map-status button {
+    font-size: 11px;
+  }
+}
+.sphere-limit {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--foreground);
+  white-space: nowrap;
+}
+.sphere-limit select {
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--foreground);
+  padding: 5px 8px;
+  border-radius: 8px;
+}
+.sphere-limit select:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.sphere-callout {
+  transition: width 220ms ease;
+}
+.sphere-callout.is-expanded {
+  width: min(380px, calc(100% - 24px));
+  pointer-events: auto;
+}
+.sphere-expanded-content {
+  color: var(--foreground);
+  animation: sphere-detail-in 200ms ease-out;
+}
+.sphere-memory-body {
+  max-height: 240px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+.sphere-callout .sphere-memory-body p {
+  display: block;
+  white-space: pre-wrap;
+  -webkit-line-clamp: unset;
+  font-size: 14px;
+}
+.sphere-memory-body dl {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px 16px;
+  padding: 0 14px 16px;
+  margin: 0;
+  font-size: 11px;
+}
+.sphere-memory-body dt {
+  color: var(--muted-foreground);
+  margin-bottom: 3px;
+}
+.sphere-memory-body dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.sphere-detail-wide {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+.sphere-detail-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  border-top: 1px solid var(--border);
+  padding: 10px 12px;
+}
+.sphere-inspect {
+  color: var(--graph-button-ink);
+}
+.sphere-inspect[data-bright="true"] {
+  color: var(--graph-bright-button-ink);
+}
+.sphere-inspect:hover {
+  filter: brightness(1.08);
+}
+.sphere-detail-error {
+  padding: 0 14px 12px;
+  color: var(--destructive);
+  font-size: 12px;
+}
+@keyframes sphere-detail-in {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sphere-callout {
+    transition: none;
+  }
+  .sphere-expanded-content {
+    animation: none;
+  }
+}
+@media (max-width: 720px) {
+  .sphere-memory-body {
+    max-height: 180px;
+  }
+  .sphere-callout.is-expanded {
+    width: calc(100% - 24px);
+  }
+}

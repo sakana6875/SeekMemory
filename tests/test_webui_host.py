@@ -200,6 +200,28 @@ class HostTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("window.AstrBotPluginPage", client)
 
+    async def test_bot_identity_and_tool_correlations_follow_host_lifecycle(self) -> None:
+        event = PrivateEvent("记住这件事", "host-identity")
+        await self.restart_plugin(owner_umo=event.unified_msg_origin)
+        event.get_self_id = lambda: "current-bot-id"
+        await self.plugin.buffer_message(event)
+        context = self.plugin._make_run_context(event.unified_msg_origin, self.plugin.clock())
+        self.assertEqual(context.bot_id, "current-bot-id")
+        self.plugin.hooks._action_attempts["old-tool-call"] = object()
+        await self.plugin.terminate()
+        self.assertEqual(self.plugin.hooks._action_attempts, {})
+        self.assertEqual(self.plugin._self_id, "")
+        await self.plugin.initialize()
+        self.assertEqual(self.plugin.hooks._action_attempts, {})
+
+    async def test_composition_shares_one_committed_id_repair_owner(self) -> None:
+        repairs = self.plugin.cache_repairs
+        services = self.plugin.services
+        self.assertIs(self.plugin.checkpoint._cache_repairs, repairs)
+        self.assertIs(services.ingest_service._cache_repairs, repairs)
+        self.assertIs(services.recall_service._context_writer.cache_repairs, repairs)
+        self.assertIs(services.maintenance_service._writes.cache_repairs, repairs)
+
     async def test_initialization_is_idempotent_and_shutdown_owns_resources(
         self,
     ) -> None:
@@ -253,8 +275,8 @@ class HostTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_engine_failure_after_open_does_not_leave_a_live_partial_engine(self) -> None:
         await self.plugin.terminate()
-        module = f"{ROOT.name}.adapters.astrbot.plugin"
-        with patch(f"{module}.Cache.load", side_effect=RuntimeError("private storage detail")):
+        module = importlib.import_module(f"{ROOT.name}.adapters.astrbot.plugin")
+        with patch.object(module.Cache, "load", side_effect=RuntimeError("private storage detail")):
             await self.plugin.initialize()
         self.assertFalse(self.plugin.ready)
         self.assertIsNone(self.plugin.store)
@@ -483,6 +505,33 @@ class HostTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(persona.header.id, info["final_ids"])
         self.assertIn("你先回应情绪", block)
 
+    async def test_designated_is_recorded_only_after_prompt_attachment(self) -> None:
+        event = PrivateEvent("保管的清单呢", "designated-context")
+        await self.restart_plugin(owner_umo=event.unified_msg_origin)
+        make = importlib.import_module(f"{ROOT.name}.core.artifact").make
+        art = make("designated", {
+            "text": "专属保管正文", "trigger": "清单", "owner_umo": event.unified_msg_origin,
+        })
+        self.plugin.store.artifacts.commit(art, expected_revision=0, op="create")
+        self.plugin.cache.put(art)
+
+        class RejectedPrompt:
+            @property
+            def system_prompt(self):
+                return "base"
+
+            @system_prompt.setter
+            def system_prompt(self, _value):
+                raise ValueError("request rejected")
+
+        await self.plugin.inject_memory(event, RejectedPrompt())
+        self.assertFalse(self.plugin.store.artifacts.get(art.header.id).payload.get("given"))
+        request = SimpleNamespace(system_prompt="base")
+        await self.plugin.inject_memory(event, request)
+        self.assertIn(art.payload["text"], request.system_prompt)
+        self.assertTrue(self.plugin.store.artifacts.get(art.header.id).payload.get("given"))
+        self.assertEqual(len(self.plugin.store.artifacts.history(art.header.id)), 2)
+
     async def test_inject_memory_preserves_context_contract(self) -> None:
         await self.restart_plugin(open_to="everyone", relationship_mode="enforce")
         artifact = importlib.import_module(f"{ROOT.name}.core.artifact")
@@ -577,6 +626,26 @@ class HostTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.plugin.store.extraction.pending_extractions(), [])
         self.assertIsNone(self.plugin.store.sources.latest_user_source(event.unified_msg_origin))
         self.assertFalse(any(row["kind"] == "recall" for row in self.plugin.journal.events))
+
+    async def test_normal_source_failure_keeps_host_delivery_correlated(self) -> None:
+        await self.restart_plugin(open_to="everyone")
+        event = PrivateEvent("first", "partial-source")
+        await self.plugin.buffer_message(event)
+        with patch.object(self.plugin.store.sources, "append_sources", side_effect=OSError("busy")):
+            await self.plugin.capture_reply(
+                event, SimpleNamespace(role="assistant", completion_text="reply"),
+            )
+            assistant_id = event.get_extra("_seekmemory_assistant_source_id")
+            self.assertTrue(assistant_id)
+            await self.plugin.record_delivery(event)
+            state = self.plugin.services.runtime.store.get(event.unified_msg_origin)
+            self.assertEqual(state.unread_count, 0)
+        self.plugin.services.runtime.retry_writebacks()
+        self.assertIn(assistant_id, self.plugin.store.sources.sources_by_ids([assistant_id]))
+        rows = self.plugin.store.runtime_episodes.list(event.unified_msg_origin)
+        delivered = [row for row in rows if row["run_id"] and row["decision"] != "action"]
+        self.assertEqual(len(delivered), 1)
+        self.assertEqual(delivered[0]["assistant_source_id"], assistant_id)
 
     async def test_normal_delivery_acknowledges_its_event_without_clearing_new_input(self) -> None:
         await self.restart_plugin(open_to="everyone")

@@ -4,7 +4,23 @@ import { mockClient } from "../src/dev/mock-client.ts"
 import { apiOperations, validateApi } from "./contract-schema.ts"
 
 void test("Mock 返回值及修订后的数据满足 OpenAPI 契约", async () => {
-  assert.equal(apiOperations.length, 9)
+  assert.equal(apiOperations.length, 18)
+  const consoleClient = mockClient.console
+  assert.ok(consoleClient)
+  validateApi("graph", 200, await consoleClient.graph())
+  validateApi("impressions", 200, await consoleClient.impressions())
+  validateApi("dream", 200, await consoleClient.dream())
+  validateApi("packs", 200, await consoleClient.packs("official"))
+  validateApi("pack", 200, await consoleClient.pack("official/big_fish"))
+  validateApi(
+    "persona",
+    200,
+    await consoleClient.persona({
+      operation: "import",
+      seed: { id: "test-pack", name: "Test", version: "1", persona: "test" },
+      confirmed: true,
+    })
+  )
   validateApi("traces", 200, await mockClient.traces())
   const records = await mockClient.records()
   validateApi("records", 200, { records })

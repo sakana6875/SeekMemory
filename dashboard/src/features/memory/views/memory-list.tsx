@@ -1,104 +1,44 @@
-import {
-  ArrowDownWideNarrow,
-  ChevronLeft,
-  ChevronRight,
-  Search,
-  TriangleAlert,
-  X,
-} from "lucide-react"
-import { Badge, Button, Input, Select, Skeleton } from "@/ui"
-import { cn } from "@/lib/utils"
+import { ChevronLeft, ChevronRight, Search, TriangleAlert } from "lucide-react"
+import { Badge, Button, Skeleton } from "@/ui"
+import { MemoryFilters, type MemoryListFilters } from "./memory-filters"
+export type { MemoryListFilters } from "./memory-filters"
 import type { MemoryLibraryViewModel } from "../use-memory-library"
 import {
-  categoryFilterOptions,
-  categoryIcons,
   categoryLabels,
+  categoryDescriptions,
   memoryDateFormat,
-  stateFilterOptions,
 } from "./presentation"
 
 interface MemoryListProps {
   vm: MemoryLibraryViewModel
   onSelect: (id: string) => void
   onRetry: () => void
+  filters?: MemoryListFilters | undefined
 }
 
-export function MemoryList({ vm, onSelect, onRetry }: MemoryListProps) {
+export function MemoryList({
+  vm,
+  onSelect,
+  onRetry,
+  filters,
+}: MemoryListProps) {
   const {
-    filters: { category, state, query },
     source,
-    setCategory,
-    setState,
-    setQuery,
     setPage,
-    resetFilters,
     hasFilters,
     pageRecords,
-    selected,
     currentPage,
     pageCount,
     resultCount,
   } = vm
+  const anyFilters = hasFilters || !!filters?.selections.length
   const status = source.status
   let summary = `共 ${resultCount} 条记忆`
   if (status === "loading") summary = "加载中…"
   else if (status === "error") summary = "加载失败"
   return (
-    <section
-      aria-label="记忆列表"
-      className="surface-panel min-w-0 flex-1 overflow-hidden"
-    >
-      <div className="space-y-3 border-b p-4">
-        <div className="relative">
-          <Search className="pointer-events-none absolute top-2.5 left-3 size-4 text-muted-foreground" />
-          <Input
-            aria-label="搜索记忆"
-            placeholder="搜索内容、标签或相关对象…"
-            value={query}
-            onChange={(event) => {
-              setQuery(event.target.value)
-            }}
-            className="h-9 bg-background pr-9 pl-9"
-          />
-          {query && (
-            <Button
-              aria-label="清空搜索"
-              variant="ghost"
-              size="icon-xs"
-              className="absolute top-1.5 right-1.5"
-              onClick={() => {
-                setQuery("")
-              }}
-            >
-              <X />
-            </Button>
-          )}
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Select
-            label="记忆类型"
-            value={category}
-            options={categoryFilterOptions}
-            onValueChange={setCategory}
-            className="max-w-32 lg:hidden"
-          />
-          <Select
-            label="记忆状态"
-            value={state}
-            options={stateFilterOptions}
-            onValueChange={setState}
-          />
-          {hasFilters && (
-            <Button variant="ghost" size="xs" onClick={resetFilters}>
-              重置筛选
-            </Button>
-          )}
-          <span className="ml-auto flex items-center gap-1 text-[11px] text-muted-foreground">
-            <ArrowDownWideNarrow className="size-3" />
-            最近更新
-          </span>
-        </div>
-      </div>
+    <section aria-label="记忆列表" className="min-w-0">
+      <MemoryFilters vm={vm} filters={filters} />
 
       {status === "loading" && (
         <div role="status" aria-label="正在加载记忆" className="divide-y">
@@ -127,82 +67,88 @@ export function MemoryList({ vm, onSelect, onRetry }: MemoryListProps) {
         <div role="status" className="px-6 py-20 text-center">
           <Search className="mx-auto mb-4 size-8 text-muted-foreground/40" />
           <h2 className="font-medium">
-            {hasFilters ? "没有找到匹配的记忆" : "这里还没有记忆"}
+            {anyFilters ? "没有找到匹配的记忆" : "这里还没有记忆"}
           </h2>
           <p className="mt-2 text-sm leading-6 text-muted-foreground">
-            {hasFilters
+            {anyFilters
               ? "试试其他关键词，或调整筛选条件。"
               : "新的记忆形成后，会出现在这个位置。"}
           </p>
         </div>
       )}
       {status === "ready" && pageRecords.length > 0 && (
-        <ul className="divide-y">
-          {pageRecords.map((record) => {
-            const Icon = categoryIcons[record.category]
-            return (
+        <div>
+          <div
+            aria-hidden="true"
+            className="hidden grid-cols-[minmax(0,1fr)_5rem_7rem_6rem] gap-5 border-y py-3 text-xs text-muted-foreground md:grid"
+          >
+            <span>记忆</span>
+            <span>类型</span>
+            <span>相关对象</span>
+            <span title="北京时间，按最近更新排序">最近更新</span>
+          </div>
+          <ul className="divide-y border-t md:border-t-0">
+            {pageRecords.map((record) => (
               <li key={record.id}>
                 <button
-                  aria-pressed={selected?.id === record.id}
                   onClick={() => onSelect(record.id)}
-                  className={cn(
-                    "group relative flex w-full gap-3 p-5 text-left transition-colors hover:bg-muted/40 focus-visible:z-10 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-inset",
-                    selected?.id === record.id &&
-                      "bg-secondary/70 before:absolute before:inset-y-4 before:left-0 before:w-0.5 before:rounded-r before:bg-primary"
-                  )}
+                  aria-haspopup="dialog"
+                  className="grid w-full gap-3 rounded-sm py-5 text-left transition-colors hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-inset md:grid-cols-[minmax(0,1fr)_5rem_7rem_6rem] md:items-center md:gap-5"
                 >
-                  <div
-                    className={cn(
-                      "mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg border bg-background text-muted-foreground",
-                      selected?.id === record.id &&
-                        "border-primary/15 text-primary"
-                    )}
-                  >
-                    <Icon className="size-4" />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-start gap-2">
-                      <h2 className="line-clamp-2 flex-1 text-sm leading-6 font-medium">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <h2 className="line-clamp-2 text-sm leading-6 font-medium">
                         {record.title}
                       </h2>
                       {record.state !== "active" && (
                         <Badge
                           variant="outline"
-                          className="mt-0.5 text-[10px] text-muted-foreground"
+                          className="shrink-0 text-xs font-normal text-muted-foreground"
                         >
                           {record.state === "forgotten" ? "已遗忘" : "已合并"}
                         </Badge>
                       )}
                     </div>
-                    <p className="mt-1 line-clamp-2 text-xs leading-6 text-muted-foreground">
-                      {record.text}
-                    </p>
-                    <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1.5 text-[10px] text-muted-foreground">
-                      <Badge
-                        variant="secondary"
-                        className="h-4 rounded px-1.5 text-[10px] font-normal"
-                      >
-                        {categoryLabels[record.category]}
-                      </Badge>
-                      <span>{record.subject}</span>
-                      <span className="opacity-40">·</span>
-                      <span>
-                        {memoryDateFormat.format(new Date(record.updatedAt))}
-                      </span>
-                      <span className="ml-auto font-mono opacity-70">
-                        v{record.versions[0].revision}
-                      </span>
-                    </div>
+                    {record.text !== record.title && (
+                      <p className="mt-1 line-clamp-1 text-sm leading-6 text-muted-foreground">
+                        {record.text}
+                      </p>
+                    )}
                   </div>
+                  <span
+                    title={categoryDescriptions[record.category]}
+                    className="hidden text-xs text-muted-foreground md:block"
+                  >
+                    {categoryLabels[record.category]}
+                  </span>
+                  <span
+                    className="hidden truncate text-xs text-muted-foreground md:block"
+                    title={record.subject}
+                  >
+                    {record.subject}
+                  </span>
+                  <span
+                    className="hidden text-xs text-muted-foreground tabular-nums md:block"
+                    title="北京时间"
+                  >
+                    {memoryDateFormat.format(new Date(record.updatedAt))}
+                  </span>
+                  <span className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground md:hidden">
+                    <span>{categoryLabels[record.category]}</span>
+                    <span>{record.subject}</span>
+                    <span>
+                      {memoryDateFormat.format(new Date(record.updatedAt))}
+                    </span>
+                  </span>
                 </button>
               </li>
-            )
-          })}
-        </ul>
+            ))}
+          </ul>
+        </div>
       )}
-      <footer className="flex items-center justify-between gap-3 border-t px-4 py-3">
+      <footer className="flex items-center justify-between gap-3 border-t py-4">
         <p aria-live="polite" className="text-[11px] text-muted-foreground">
-          {summary}
+          {summary} · 北京时间
         </p>
         <div className="flex items-center gap-2">
           <Button

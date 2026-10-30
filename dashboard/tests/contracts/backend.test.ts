@@ -1,3 +1,14 @@
+import {
+  artworkSchema,
+  bundleSchema,
+  rollbackResultSchema,
+  graphSchema,
+  impressionsSchema,
+  dreamSchema,
+  packsSchema,
+  packDetailSchema,
+  personaResultSchema,
+} from "../../src/features/shell/model.ts"
 import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 import { afterEach, test } from "node:test"
@@ -40,6 +51,15 @@ const samples = z
 
 void test("真实后端响应同时满足 OpenAPI 与前端 Zod，覆盖全部操作及错误状态", () => {
   const parsers: Record<string, z.ZodType> = {
+    rollbackPersona: rollbackResultSchema,
+    graph: graphSchema,
+    impressions: impressionsSchema,
+    dream: dreamSchema,
+    packs: packsSchema,
+    pack: packDetailSchema,
+    packArtwork: artworkSchema,
+    packExport: bundleSchema,
+    persona: personaResultSchema,
     records: z.object({ records: memoryCollectionSchema }),
     detail: detailSchema,
     status: statusSchema,
@@ -99,7 +119,32 @@ void test("真实状态响应保留原文辅助检索预算，两端拒绝错误
 })
 
 void test("生产桥接适配器消费全部成功响应，路径与请求体符合契约", async () => {
+  const client = astrbotClient.console
+  assert.ok(client)
   const calls: Record<string, () => Promise<unknown>> = {
+    rollbackPersona: () =>
+      client.rollbackPersona({
+        id: "fixture",
+        revision: 1,
+        reason: "恢复测试",
+        confirmed: true,
+      }),
+    graph: () => client.graph(),
+    impressions: () => client.impressions(),
+    dream: () => client.dream(),
+    packs: () => client.packs("official"),
+    pack: () => client.pack("official/big_fish"),
+    packArtwork: () => client.packArtwork("mine/big_fish"),
+    packExport: () => client.packExport("mine/big_fish"),
+    persona: () =>
+      client.persona({
+        operation: "install",
+        reference: "official/big_fish",
+        expectedId: null,
+        expectedRevision: 0,
+        expectedDigest: "0".repeat(64),
+        confirmed: true,
+      }),
     records: () => astrbotClient.records(),
     status: () => astrbotClient.status(),
     detail: () => astrbotClient.detail("fixture"),

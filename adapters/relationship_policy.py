@@ -1,24 +1,25 @@
-"""Read-only V2 relationship lookup."""
+"""Read-only V2 relationship lookup; never affect runtime replies or prompts."""
 
 from __future__ import annotations
 
 try:
+    from ..app.ports import ArtifactCache
     from ..core.artifact import validate
     from ..core.relationship import RelationshipSnapshot, snapshot_from_payload
-    from ..app.ports import ArtifactCache
 except ImportError:
+    from app.ports import ArtifactCache
     from core.artifact import validate
     from core.relationship import RelationshipSnapshot, snapshot_from_payload
-    from app.ports import ArtifactCache
 
 
 class RelationshipReader:
-    """Read a unique active V2 relationship; malformed or V1 rows are neutral."""
+    """Read a unique active V2 relationship; malformed or V1 rows stay neutral."""
 
     def __init__(self, cache: ArtifactCache | None) -> None:
         self.cache = cache
 
     def get(self, subject_id: str) -> RelationshipSnapshot:
+        """Return a content-free snapshot, failing open for invalid or missing rows."""
         subject = str(subject_id or "").strip()
         neutral = RelationshipSnapshot(subject_id=subject)
         if not subject or self.cache is None:

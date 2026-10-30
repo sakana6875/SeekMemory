@@ -1,69 +1,60 @@
-import { Badge, Input, JsonView, Select, type BadgeProps } from "@/ui"
-import type { OperationEvent } from "../model"
+import { useCallback, useEffect, useRef, useState } from "react"
+import { ArrowDown, Pause, Play, RefreshCw, Terminal } from "lucide-react"
+import { Button, Input, Select } from "@/ui"
+import type { ManagementClient } from "../model"
 import { useLogs } from "../use-logs"
-
-const labels: Record<string, string> = {
-  queued: "排队",
-  running: "运行中",
-  succeeded: "成功",
-  failed: "失败",
-  cancelled: "已取消",
-  interrupted: "异常中断",
-  ready: "就绪",
-  stopped: "停止",
-  debug: "调试",
-  info: "信息",
-  warning: "警告",
-}
-
-const levelTones = {
-  ERROR: "danger",
-  WARNING: "warning",
-  INFO: "info",
-  DEBUG: "info",
-} satisfies Record<OperationEvent["level"], BadgeProps["tone"]>
-
-export function LogView({ events }: { events: readonly OperationEvent[] }) {
-  const vm = useLogs(events)
+import { useLogFeed } from "../use-log-feed"
+import { LogEntry, logStateLabels } from "./log-entry"
+import "./log-view.css"
+export function LogView({ client }: { client: ManagementClient }) {
+  const read = useCallback(() => client.events(), [client])
+  const [visible, setVisible] = useState(!document.hidden)
+  useEffect(() => {
+    const update = () => setVisible(!document.hidden)
+    document.addEventListener("visibilitychange", update)
+    return () => document.removeEventListener("visibilitychange", update)
+  }, [])
+  const feed = useLogFeed(read, visible)
+  let feedStatus = "每 3 秒更新"
+  if (feed.loading) feedStatus = "正在连接…"
+  if (feed.paused) feedStatus = "更新已暂停"
+  if (feed.error) feedStatus = "连接异常"
+  const vm = useLogs(feed.events)
+  const [follow, setFollow] = useState(true)
+  const viewport = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const element = viewport.current
+    if (follow && element) element.scrollTop = element.scrollHeight
+  }, [feed.events, vm.query, vm.kind, vm.state, vm.level, vm.module, follow])
   return (
-    <section className="mx-auto w-full max-w-7xl space-y-6 p-5 sm:p-8">
-      <div className="workspace-intro">
-        <h1 className="text-2xl font-semibold">生命周期与日志</h1>
-        <p className="mt-2 text-sm text-muted-foreground">
-          最近 500 条业务记录 · 模块 / 函数 / 行号 · 阶段耗时与任务关联
-        </p>
-        <p className="mt-1 text-xs text-muted-foreground">
-          仅显式记录的业务事件；异常展示类型与调用位置，不记录对话正文、模型响应或局部变量。
-        </p>
-      </div>
-      <div className="flex flex-wrap gap-3">
+    <section className="console-page log-page">
+      <header className="console-page-intro log-page-heading">
+        <h1>生命周期日志</h1>
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            onClick={() => feed.setPaused(!feed.paused)}
+            aria-pressed={feed.paused}
+          >
+            {feed.paused ? <Play /> : <Pause />}
+            {feed.paused ? "继续更新" : "暂停更新"}
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label="刷新日志"
+            onClick={feed.refresh}
+          >
+            <RefreshCw />
+          </Button>
+        </div>
+      </header>
+      <div className="log-toolbar">
         <Input
           aria-label="搜索日志"
-          className="max-w-md"
           value={vm.query}
           onChange={(event) => vm.setQuery(event.target.value)}
-          placeholder="搜索模块、函数、阶段、任务 ID 或业务字段"
-        />
-        <Select
-          label="日志类型"
-          value={vm.kind}
-          onValueChange={vm.setKind}
-          options={[
-            { value: "all", label: "全部类型" },
-            ...vm.kinds.map((value) => ({ value, label: value })),
-          ]}
-        />
-        <Select
-          label="日志状态"
-          value={vm.state}
-          onValueChange={vm.setState}
-          options={[
-            { value: "all", label: "全部状态" },
-            ...Object.entries(labels).map(([value, label]) => ({
-              value,
-              label,
-            })),
-          ]}
+          placeholder="搜索日志、模块或任务…"
         />
         <Select
           label="日志级别"
@@ -77,91 +68,128 @@ export function LogView({ events }: { events: readonly OperationEvent[] }) {
             })),
           ]}
         />
-        <Select
-          label="日志模块"
-          value={vm.module}
-          onValueChange={vm.setModule}
-          options={[
-            { value: "all", label: "全部模块" },
-            ...vm.modules.map((value) => ({ value, label: value })),
-          ]}
-        />
-      </div>
-      <p className="text-xs text-muted-foreground">
-        匹配 {vm.filtered.length} / {events.length} 条
-      </p>
-      <div className="surface-panel divide-y overflow-hidden">
-        {vm.filtered.length === 0 && (
-          <p className="p-10 text-center text-muted-foreground">暂无匹配日志</p>
+        <details className="log-more-filters">
+          <summary>
+            更多筛选
+            {vm.kind !== "all" || vm.state !== "all" || vm.module !== "all"
+              ? " · 已筛选"
+              : ""}
+          </summary>
+          <div>
+            <Select
+              label="日志类型"
+              value={vm.kind}
+              onValueChange={vm.setKind}
+              options={[
+                { value: "all", label: "全部类型" },
+                ...vm.kinds.map((value) => ({ value, label: value })),
+              ]}
+            />
+            <Select
+              label="日志状态"
+              value={vm.state}
+              onValueChange={vm.setState}
+              options={[
+                { value: "all", label: "全部状态" },
+                ...Object.entries(logStateLabels).map(([value, label]) => ({
+                  value,
+                  label,
+                })),
+              ]}
+            />
+            <Select
+              label="日志模块"
+              value={vm.module}
+              onValueChange={vm.setModule}
+              options={[
+                { value: "all", label: "全部模块" },
+                ...vm.modules.map((value) => ({ value, label: value })),
+              ]}
+            />
+          </div>
+        </details>
+        {(vm.query ||
+          vm.level !== "all" ||
+          vm.kind !== "all" ||
+          vm.state !== "all" ||
+          vm.module !== "all") && (
+          <Button
+            variant="ghost"
+            onClick={() => {
+              vm.setQuery("")
+              vm.setLevel("all")
+              vm.setKind("all")
+              vm.setState("all")
+              vm.setModule("all")
+            }}
+          >
+            清除筛选
+          </Button>
         )}
-        {vm.filtered.map((event) => (
-          <article key={event.id} className="space-y-3 p-4 sm:px-6">
-            <div className="flex flex-wrap items-center gap-3 text-xs">
-              <time className="text-muted-foreground">{event.at}</time>
-              <Badge variant="outline" tone={levelTones[event.level]}>
-                {event.level}
-              </Badge>
-              <Badge variant="secondary">{event.kind}</Badge>
-              <Badge variant="outline">
-                {labels[event.status] ?? event.status}
-              </Badge>
-              {event.stage && (
-                <code className="wrap-anywhere">{event.stage}</code>
-              )}
-              {event.durationMs !== null && (
-                <span>{event.durationMs.toLocaleString()} ms</span>
-              )}
-            </div>
-            {event.source ? (
-              <p className="font-mono text-xs wrap-anywhere text-muted-foreground">
-                {event.source.module} · {event.source.file}:{event.source.line}{" "}
-                · {event.source.function}()
-              </p>
-            ) : (
-              <p className="text-xs text-muted-foreground">
-                旧记录未采集源码位置
-              </p>
-            )}
-            <p className="text-sm wrap-anywhere">{event.message}</p>
-            {event.taskId && (
-              <button
-                className="text-xs wrap-anywhere text-primary underline"
-                onClick={() => vm.setQuery(event.taskId)}
-              >
-                任务 {event.taskId}
-              </button>
-            )}
-            {(Object.keys(event.context).length > 0 || event.error) && (
-              <details className="text-xs">
-                <summary className="cursor-pointer text-primary">
-                  业务字段与异常位置
-                  {event.error ? ` · ${event.error.type}` : ""}
-                </summary>
-                <div className="mt-3 space-y-3">
-                  {Object.keys(event.context).length > 0 && (
-                    <JsonView value={event.context} />
-                  )}
-                  {event.error && (
-                    <div className="space-y-2 rounded-lg border border-destructive/20 p-4">
-                      <p className="font-semibold text-destructive">
-                        {event.error.type}
-                      </p>
-                      {event.error.frames.map((frame, index) => (
-                        <p
-                          key={`${frame.file}:${frame.line}:${index}`}
-                          className="font-mono wrap-anywhere"
-                        >
-                          {frame.module} · {frame.file}:{frame.line} ·{" "}
-                          {frame.function}()
-                        </p>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </details>
-            )}
-          </article>
-        ))}
+      </div>
+      <div className="log-console">
+        <div className="log-console-bar">
+          <span>
+            <Terminal size={15} />
+            只读日志
+          </span>
+          <span role="status">{feedStatus}</span>
+        </div>
+        {feed.error && (
+          <p role="alert" className="log-feed-error">
+            {feed.error} ·{" "}
+            {feed.events.length
+              ? "已保留上次日志，可点击刷新重试。"
+              : "可点击刷新重试。"}
+          </p>
+        )}
+        <div
+          className="log-viewport"
+          ref={viewport}
+          role="region"
+          aria-label="日志输出"
+          // Keyboard focus lets users scroll this bounded output without a mouse.
+          // oxlint-disable-next-line jsx-a11y/no-noninteractive-tabindex
+          tabIndex={0}
+          onScroll={() => {
+            const el = viewport.current
+            if (el && el.scrollHeight - el.scrollTop - el.clientHeight > 48)
+              setFollow(false)
+          }}
+        >
+          {feed.loading && (
+            <p className="log-empty" role="status">
+              正在读取日志…
+            </p>
+          )}
+          {!feed.loading && !feed.error && !vm.filtered.length && (
+            <p className="log-empty">
+              {feed.events.length ? "没有匹配日志，请调整筛选。" : "暂无日志"}
+            </p>
+          )}
+          {vm.filtered.map((event) => (
+            <LogEntry
+              key={event.id}
+              event={event}
+              onTask={vm.setQuery}
+              onExpand={() => setFollow(false)}
+            />
+          ))}
+        </div>
+        <footer className="log-console-bar">
+          <span>
+            {vm.filtered.length} / {feed.events.length} 条 · 时间从早到晚
+          </span>
+          <Button
+            variant="ghost"
+            size="sm"
+            aria-pressed={follow}
+            onClick={() => setFollow(!follow)}
+          >
+            <ArrowDown />
+            {follow ? "正在跟随" : "跟随最新"}
+          </Button>
+        </footer>
       </div>
     </section>
   )

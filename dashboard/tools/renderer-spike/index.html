@@ -1,0 +1,204 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>SeekMemory renderer comparison (development only)</title>
+<style>
+  body {
+    background: #faf7f2;
+    color: #4b3c50;
+    font: 14px system-ui;
+    padding: 24px;
+  }
+  canvas {
+    width: 48%;
+    border: 1px solid #ddd;
+    background: #fff;
+  }
+  button {
+    padding: 12px;
+  }
+  pre {
+    white-space: pre-wrap;
+  }
+</style>
+<h1>1,000 nodes / 2,000 edges — renderer comparison</h1>
+<p>
+  Same settled d3-force positions; CPU submission timing, not GPU completion or
+  end-to-end FPS. No production data.
+</p>
+<button id="run">Run 60 samples</button>
+<div>
+  <canvas id="canvas" width="800" height="560"></canvas
+  ><canvas id="webgl" width="800" height="560"></canvas>
+</div>
+<pre id="result">Ready</pre>
+<script src="/node_modules/.tmp/renderer-spike-vendor/d3-quadtree.min.js"></script>
+<script src="/node_modules/.tmp/renderer-spike-vendor/d3-dispatch.min.js"></script>
+<script src="/node_modules/.tmp/renderer-spike-vendor/d3-timer.min.js"></script>
+<script src="/node_modules/.tmp/renderer-spike-vendor/d3-force.min.js"></script>
+<script>
+  const stats = (values) => {
+    const sorted = [...values].sort((a, b) => a - b)
+    return {
+      median: sorted[Math.floor(sorted.length / 2)],
+      p95: sorted[Math.floor(sorted.length * 0.95)],
+      max: sorted.at(-1),
+    }
+  }
+  document.querySelector("#run").onclick = async () => {
+    const output = document.querySelector("#result")
+    output.textContent = "Running…"
+    document.querySelector("#run").disabled = true
+    try {
+      const nodes = Array.from({ length: 1000 }, (_, i) => ({ id: String(i) }))
+      const links = nodes.flatMap((n, i) => [
+        { source: n.id, target: String((i + 1) % 1000) },
+        { source: n.id, target: String((i + 11) % 1000) },
+      ])
+      const simulation = d3
+        .forceSimulation(nodes)
+        .force("charge", d3.forceManyBody().strength(-8))
+        .force(
+          "link",
+          d3
+            .forceLink(links)
+            .id((n) => n.id)
+            .distance(12)
+        )
+        .force("center", d3.forceCenter())
+        .stop()
+      const layout = []
+      for (let i = 0; i < 60; i++) {
+        const start = performance.now()
+        simulation.tick()
+        layout.push(performance.now() - start)
+        if (i % 5 === 0) await new Promise(requestAnimationFrame)
+      }
+      const scale = Math.min(
+        700 / Math.max(...nodes.map((n) => Math.abs(n.x) * 2)),
+        480 / Math.max(...nodes.map((n) => Math.abs(n.y) * 2))
+      )
+      const points = nodes.map((n) => ({ x: n.x * scale, y: n.y * scale }))
+      const ids = new Map(nodes.map((n, i) => [n.id, i]))
+      const edges = links.map((e) => [
+        ids.get(e.source.id),
+        ids.get(e.target.id),
+      ])
+      const ctx = document.querySelector("#canvas").getContext("2d")
+      function drawCanvas() {
+        ctx.clearRect(0, 0, 800, 560)
+        ctx.save()
+        ctx.translate(400, 280)
+        ctx.strokeStyle = "#d9c9cf"
+        ctx.lineWidth = 0.7
+        for (const [a, b] of edges) {
+          ctx.beginPath()
+          ctx.moveTo(points[a].x, points[a].y)
+          ctx.lineTo(points[b].x, points[b].y)
+          ctx.stroke()
+        }
+        ctx.fillStyle = "#b2769a"
+        for (const p of points) {
+          ctx.beginPath()
+          ctx.arc(p.x, p.y, 3, 0, Math.PI * 2)
+          ctx.fill()
+        }
+        ctx.restore()
+      }
+      const gl = document.querySelector("#webgl").getContext("webgl")
+      if (!gl) throw new Error("WebGL unavailable")
+      const shader = (type, source) => {
+        const s = gl.createShader(type)
+        gl.shaderSource(s, source)
+        gl.compileShader(s)
+        if (!gl.getShaderParameter(s, gl.COMPILE_STATUS))
+          throw new Error(gl.getShaderInfoLog(s))
+        return s
+      }
+      const program = gl.createProgram()
+      gl.attachShader(
+        program,
+        shader(
+          gl.VERTEX_SHADER,
+          "attribute vec2 position; uniform float size; void main(){gl_Position=vec4(position,0.,1.);gl_PointSize=size;}"
+        )
+      )
+      gl.attachShader(
+        program,
+        shader(
+          gl.FRAGMENT_SHADER,
+          "precision mediump float; uniform vec4 color; uniform bool roundPoint; void main(){if(roundPoint&&distance(gl_PointCoord,vec2(.5))>.5)discard;gl_FragColor=color;}"
+        )
+      )
+      gl.linkProgram(program)
+      gl.useProgram(program)
+      const position = gl.getAttribLocation(program, "position"),
+        size = gl.getUniformLocation(program, "size"),
+        color = gl.getUniformLocation(program, "color"),
+        roundPoint = gl.getUniformLocation(program, "roundPoint")
+      const verts = (ps) =>
+        new Float32Array(ps.flatMap((p) => [p.x / 400, -p.y / 280]))
+      const pointData = verts(points),
+        edgeData = verts(edges.flatMap(([a, b]) => [points[a], points[b]]))
+      const buffer = (data) => {
+        const b = gl.createBuffer()
+        gl.bindBuffer(gl.ARRAY_BUFFER, b)
+        gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW)
+        return b
+      }
+      const pb = buffer(pointData),
+        eb = buffer(edgeData)
+      const draw = (b, count, mode, c, round) => {
+        gl.bindBuffer(gl.ARRAY_BUFFER, b)
+        gl.enableVertexAttribArray(position)
+        gl.vertexAttribPointer(position, 2, gl.FLOAT, false, 0, 0)
+        gl.uniform4fv(color, c)
+        gl.uniform1f(size, 6)
+        gl.uniform1i(roundPoint, round)
+        gl.drawArrays(mode, 0, count)
+      }
+      function drawGL() {
+        gl.clearColor(1, 1, 1, 1)
+        gl.clear(gl.COLOR_BUFFER_BIT)
+        draw(eb, 4000, gl.LINES, [0.85, 0.79, 0.81, 1], 0)
+        draw(pb, 1000, gl.POINTS, [0.7, 0.46, 0.6, 1], 1)
+      }
+      const canvasTimes = [],
+        glTimes = []
+      for (let i = 0; i < 70; i++) {
+        await new Promise(requestAnimationFrame)
+        let start = performance.now()
+        drawCanvas()
+        const c = performance.now() - start
+        start = performance.now()
+        drawGL()
+        const g = performance.now() - start
+        if (i >= 10) {
+          canvasTimes.push(c)
+          glTimes.push(g)
+        }
+      }
+      output.textContent = JSON.stringify(
+        {
+          nodes: 1000,
+          edges: 2000,
+          samples: 60,
+          d3TickMs: stats(layout),
+          canvasSubmitMs: stats(canvasTimes),
+          webglSubmitMs: stats(glTimes),
+          canvasBackingBytes: 800 * 560 * 4,
+          webglVertexBytes: pointData.byteLength + edgeData.byteLength,
+          userAgent: navigator.userAgent,
+        },
+        null,
+        2
+      )
+      gl.deleteBuffer(pb)
+      gl.deleteBuffer(eb)
+      gl.deleteProgram(program)
+    } catch (error) {
+      output.textContent = String(error)
+    } finally {
+      document.querySelector("#run").disabled = false
+    }
+  }
+</script>

@@ -26,3 +26,36 @@ family=secret never enters the ordinary candidate pool. A memory with scope=shad
 ## Observability
 
 The returned info includes mode, candidate count, gate outcome, disclosure levels, fallback mode, final_ids, dropped_ids, and Source-fallback counters. Normal logs should contain only counts and IDs, never Source text or private assembled content.
+
+## Explicit interfaces and side effects
+
+`recall/domain.py` explicitly exports supported queries, retrieval/assembly entries and the context-injection writer; `recall/ports.py` reuses existing app repository/cache/retriever protocols. Legacy imports remain valid. `query_block()` and `RecallService.query()` are pure memory queries: cache/Source/version reads and derived in-memory indexing are allowed, but no memory commit or given-state update occurs. Preview uses the pure query.
+
+`record_context()` / `RecallService.record_context_injection()` are explicit writes. They mark designated memories only when their body occurs in the final block and their IDs survived assembly. The meaning remains **body included in model context**, independent of later model or send success. AstrBot calls recording after attaching the block to the request. Deferred/proactive runtime calls the optional generic `MemoryContextRecorder` immediately before model invocation; Runtime has no designated-domain rules.
+
+Legacy `build_block()` and `RecallService.build()` retain their parameters, return shapes and default query-plus-recording behavior; `dry_run=True` stays read-only. This compatibility side effect must be considered when adding new callers. Runtime context construction uses the pure service query.
+
+| Files | Responsibility / effects | Logical complexity and coupling |
+|---|---|---|
+| `pipeline.py` | Candidate → scoring/filtering → disclosure → assembly; compatible write wrapper | Medium/high: coordinates existing rules, no duplicated query implementation |
+| `selection.py` | Config interpretation, speaker identity and recent-memory fallback | Low: pure rules, subject affinity is a ranking signal |
+| `source_fallback.py` | Bounded evidence reads → current Artifact discovery | Medium: reads only, no raw Source body injected |
+| `disclosure.py` | Apply shared privacy decisions and safe wording overrides | Medium: one disclosure stage before rendering |
+| `context_recording.py`, `designated.py` | Explicit context inclusion records and existing private/trigger guards | Medium: versioned writes separate from queries |
+| `retriever.py`, `bm25.py`, `seed.py`, `tokenizer.py`, `spread.py` | Derived lexical/graph signals, index invalidation and bounded expansion | Medium: no model/network calls or business writes |
+| `score.py`, `gate.py`, `intent.py`, `temporal.py` | Existing scoring, evidence, intent and date rules | Medium: formulas, thresholds and time behavior unchanged |
+| `assemble.py`, `history.py`, `drift.py`, `scope.py` | Narrative budget, optional impression history, spontaneous recall and explicit candidate access | Medium: caller supplies candidates/resources |
+
+`tests/test_recall_context_integration.py` covers pure reads, compatible default writes, explicit repeated recording, budget-dropped bodies and model/send failure timing. `tests/test_recall_interface_contract.py` covers the approved export set and optional generic runtime capability; fresh import-order tests cover top-level and plugin namespaces. Existing privacy, scope and frozen BM25 acceptance remain required; these tests are not live-model quality evidence.
+
+## Context-record recovery
+
+`RecallService` owns one `ContextRecorder` for process-local pending inclusion commits and cache-only repairs. Query metadata includes the designated IDs and observed revisions that survived assembly; recording retains that revision and original timestamp. A failed database commit stays pending. A changed revision or CAS conflict is discarded rather than rebased onto new text. Database success consumes the pending commit before any cache operation and counts as one committed marker even if cache refresh fails.
+
+Pure queries read current designated database heads without filling cache. A failed designated read withholds that item; stale cache cannot re-inject an already committed given body. Cache-only retries read the newest database version and never issue another delivery commit. `retry_writebacks()` completes prepared persistence without recalling, generating or sending again; existing background cadence and shutdown delegate it independently of extraction/speaking switches.
+
+Legacy `mark_given()` and `record_context()` attempt through the same implementation once. Callers needing later compensation retain a `ContextRecorder`, as RecallService does. Recovery is process-local, with no new schema/jobs or crash/multiprocess guarantees. `tests/test_recall_failure_recovery.py` covers failed commits/reads, continuous cache failures, newer heads, stale/conflicting receipts, legacy counts and shutdown compensation. Reverting this recovery commit needs no data migration.
+
+Committed-ID cache repair is shared through `app.CacheRepairs`; the composition root injects the same instance into checkpoint, extraction, context and maintenance writers. Business plans remain with each use case, and per-owner counts keep unrelated repairs out of checkpoint pending totals.
+
+`designated_policy.py` owns pure trigger, given-state and private-chat predicates. `designated.py` retains legacy aliases and the one-shot recording entry; the recorder depends directly on policy, removing the internal implementation cycle.

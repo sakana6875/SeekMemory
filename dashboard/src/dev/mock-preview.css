@@ -1,0 +1,16 @@
+.mock-preview {
+  display: grid;
+  height: 100svh;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+.mock-preview > .console-workspace {
+  height: 100%;
+  min-height: 0;
+  overflow: auto;
+}
+.mock-preview .console-sidebar {
+  height: 100%;
+}
+.mock-preview .console-content {
+  min-height: 100%;
+}

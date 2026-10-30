@@ -1,25 +1,20 @@
-import { useEffect, useState } from "react"
+import "./mock-preview.css"
+import { loadClient } from "./load-fixtures"
+import { scenarioClient } from "./mock-scenarios"
+import { useEffect, useMemo, useState } from "react"
 import { FlaskConical, Moon, Sun } from "lucide-react"
 
-import { MemoryWorkspace } from "@/features/memory/views/memory-workspace"
-import { ControlWorkspace } from "@/features/control/views/control-workspace"
+import { ConsoleWorkspace } from "@/features/shell/console-workspace"
 import { mockClient } from "./mock-client"
 import { Button, Select, type SelectOption } from "@/ui"
-import { mockMemories } from "@/dev/mock-data"
-import {
-  memoryCollectionSchema,
-  type MemorySource,
-} from "@/features/memory/model"
-
 type PreviewScenario = "ready" | "loading" | "empty" | "error" | "long"
 const scenarioOptions: readonly SelectOption<PreviewScenario>[] = [
   { value: "ready", label: "正常数据" },
   { value: "loading", label: "加载中" },
   { value: "empty", label: "空数据" },
   { value: "error", label: "加载失败" },
-  { value: "long", label: "长内容" },
+  { value: "long", label: "大数据预览（最近 120 条）" },
 ]
-const parsedMock = memoryCollectionSchema.safeParse(mockMemories)
 
 export default function MockApp() {
   const [scenario, setScenario] = useState<PreviewScenario>("ready")
@@ -32,25 +27,14 @@ export default function MockApp() {
     }
   }, [dark])
 
-  let source: MemorySource
-  if (scenario === "loading") source = { status: "loading" }
-  else if (scenario === "error")
-    source = {
-      status: "error",
-      message: "这是模拟错误，可以重试返回正常预览。",
-    }
-  else if (!parsedMock.success)
-    source = { status: "error", message: "示例数据校验失败，请检查开发数据。" }
-  else {
-    let records = parsedMock.data
-    if (scenario === "empty") records = []
-    else if (scenario === "long")
-      records = records.filter((record) => record.id === "mock_memory_010")
-    source = { status: "ready", records }
-  }
+  const client = useMemo(() => {
+    if (scenario === "ready") return mockClient
+    if (scenario === "long") return loadClient(mockClient)
+    return scenarioClient(mockClient, scenario)
+  }, [scenario])
 
   return (
-    <div className="flex min-h-svh flex-col">
+    <div className="mock-preview">
       <div className="flex min-h-12 flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-primary/15 bg-primary/5 px-4 py-2 sm:px-6">
         <div className="flex items-center gap-2.5 text-xs">
           <FlaskConical className="size-3.5 text-primary" />
@@ -84,15 +68,7 @@ export default function MockApp() {
           </Button>
         </div>
       </div>
-      {scenario === "ready" ? (
-        <ControlWorkspace client={mockClient} />
-      ) : (
-        <MemoryWorkspace
-          key={scenario}
-          source={source}
-          onRetry={() => setScenario("ready")}
-        />
-      )}
+      <ConsoleWorkspace key={scenario} client={client} />
     </div>
   )
 }

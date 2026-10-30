@@ -6,7 +6,9 @@ adapters translates AstrBot events, providers, and message sending into applicat
 
 ## Composition root
 
-On start, AstrBotPlugin builds Store, Cache, Tree, Graph, HybridRetriever, Source-backed Buffer, CheckpointManager, application services, AgentRuntime, Jobs, WebRoutes, and background services. On stop, it stops background and management tasks, unregisters its own routes, saves the buffer, flushes checkpoints, and finally closes Store.
+The standalone console has its own composition root in `adapters/console/runtime.py` and HTTP entry in `adapters/console/server.py`. It reuses management and recall services, existing stores, and PersonaPacks without loading the AstrBot SDK or starting chat, models, or maintenance workers. Its HTTP adapter owns authentication and loopback-origin checks; see [WebUI](webui.md).
+
+On start, AstrBotPlugin builds Store, Cache, TreeService, Graph, HybridRetriever, Source-backed Buffer, CheckpointManager, application services, AgentRuntime, Jobs, WebRoutes, and background services. On stop, it stops background and management tasks, unregisters its own routes, saves the buffer, flushes checkpoints, and finally closes Store.
 
 main.py defines the plugin entry point and delegates lifecycle; composition and wiring live in adapters/astrbot/plugin.py. AstrBotPlugin explicitly owns hooks and attention components instead of sharing host state through multiple inheritance. AstrBotHooks in adapters/astrbot/hooks.py maps host hooks to service calls: access decisions, input acceptance, memory injection, assistant-reply capture, post-send delivery recording, and runtime/tool observation. It does not implement extraction, capacity, or maintenance algorithms.
 
@@ -19,7 +21,7 @@ Start and stop share a lifecycle lock. Partial initialization releases resources
 - AstrBotActionPort provides both ActionPort and MessageSender: execute accepts ActionRequest and returns ActionResult; the existing send method delegates to execute and returns a boolean.
 - ProviderChatModel wraps a host extraction/persona provider as ChatModel.
 - SeekMemoryContextAdapter connects Runtime's MemoryContextPort to the existing RecallService.
-- RelationshipReader returns a unique, validated, content-free V2 snapshot from Cache; V1, corrupt, or duplicate rows are neutral. Relationship state supplies no reply gate or tone directive to host hooks. The independent Runtime gate retains its existing configuration.
+- RelationshipReader returns one validated, content-free V2 snapshot per subject from Cache. AstrBot does not gate replies or inject a style directive from relationship state; the independent configured Runtime gate remains separate.
 
 Action request text is transient execution input, never an ActionRecord audit field. Unsupported actions return unsupported_action; empty text, missing sessions, unavailable hosts, rejected sends, and execution errors have fixed reason codes. Host exception messages are not returned; cancellation propagates so runtime can recover. The adapter reports execution results without owning retries, audit deduplication, or terminal-state decisions.
 
@@ -45,3 +47,25 @@ Legacy or unsupported runtime services retain capture/recall. Once a runtime wri
 
 Each DSH host context registers once. Unload removes hooks, aborts bridge requests, and clears context caches; late responses cannot inject. The repository now also contains a real Python loopback composition (`scripts/runtime_http.py`) and a Node test that exercises the DSH bridge against it.
 Relationship mode defaults to observe: `off` skips relationship maintenance, while `observe` and the legacy config value `enforce` currently consolidate verified events only, without changing reply availability or style. Relationship Artifacts remain excluded from Recall and the management catalog. Expression tuning requires separate review and explicit enablement.
+
+## Explicit interfaces and host bindings
+
+`adapters/domain.py` exports SDK-free shared persona-file and relationship adapters; `adapters/ports.py` reuses application protocols. `adapters/astrbot/domain.py` exports AstrBot integration entries and intentionally requires its SDK. SDK-free event/runtime/time/action/context mappings remain available at their original individual paths. `adapters/astrbot/ports.py` declares the finite `HookHost`, `ProviderHost` and `MessageHost` views.
+
+Hooks/attention no longer forward arbitrary unknown attributes. Their `_bindings` property exposes only the documented typed host capability view; detached test adapters can bind the same fields locally. The host remains the single owner of readiness, services, repositories and runtime-audit cleanup timestamp. Hook-local tool correlation remains separate from host resource ownership.
+
+| Files | Responsibility and effects | Logical complexity and coupling |
+|---|---|---|
+| `astrbot/plugin.py` | Construct resources in dependency order and close them in lifecycle order | High: composition root; no memory algorithms |
+| `astrbot/hooks.py`, `attention.py` | Map callbacks and apply the existing runtime/access/interaction decisions | Medium/high: finite typed host view, no arbitrary forwarding |
+| `astrbot/registration.py` | Stable callback module/name/priority/order | Low: SDK registration only; old hooks imports remain aliases |
+| `astrbot/events.py`, `runtime.py` | Event/receipt/extra correlation mapping | Medium: no SDK event imports or persistence policy |
+| `astrbot/actions.py`, `model.py`, `context.py` | Host sends/provider calls and explicit context-record forwarding | Low: narrow injected host capabilities |
+| `astrbot/time.py`, `topics.py` | Existing UTC+8 read/write views and Source-backed topic candidates | Medium: conversion and queue views; no new time policy |
+| `persona_packs.py`, `relationship_policy.py` | Authored local files and validated relationship projections | Medium: format/access rules remain in their existing owners |
+
+`tests/test_adapter_interface_contract.py` protects shared exports/protocols; runtime plugin tests protect finite dependencies and callback identity/order. Existing host lifecycle, cancellation, context, action and time-hook checks remain required. The UTC+8 implementation was compared as an AST with docstrings removed and is unchanged. Management routes and Node/frontend implementations are outside restructuring scope.
+
+The host owns the observed bot identity used by background RunContext. Callback-only tool attempts belong to AstrBotHooks and are cleared after resource cleanup, so restart cannot complete an old tool receipt against a new executor. The host lifecycle regression covers identity capture, shutdown clearing and restart.
+
+Committed-ID cache repair is shared through `app.CacheRepairs`; the composition root injects the same instance into checkpoint, extraction, context and maintenance writers. Business plans remain with each use case, and per-owner counts keep unrelated repairs out of checkpoint pending totals.

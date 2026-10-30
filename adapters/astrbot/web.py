@@ -1,4 +1,7 @@
-"""将经过认证的管理请求适配到 AstrBot 桥接接口。"""
+"""Adapt authenticated management requests to AstrBot; this instance owns its routes.
+
+将经过认证的管理请求适配到 AstrBot，当前实例拥有其注册路由。
+"""
 
 from __future__ import annotations
 
@@ -6,18 +9,23 @@ from collections import Counter
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+from ...services.trace_query import query_traces
+
 if TYPE_CHECKING:
-    from ..main import Main
+    from ...main import Main
 
 
 class WebRoutes:
-    """管理当前插件实例注册的路由。"""
+    """Own routes registered for one plugin instance; preserve replacement routes.
+
+    管理一个插件实例注册的路由，保留后续替代路由。
+    """
 
     def __init__(self, plugin: Main) -> None:
         self.plugin = plugin
 
     def register(self) -> None:
-        """宿主支持插件 Web API 时，注册原生接口处理器。"""
+        """Register native routes when the host supports plugin Web APIs / 宿主支持插件 Web API 时注册原生路由。"""
         try:
             import astrbot.api.web  # noqa: F401
         except ImportError:
@@ -31,15 +39,17 @@ class WebRoutes:
         )
 
     def close(self) -> None:
-        """仅移除仍由当前实例持有的路由，保留后续实例的替代路由。"""
+        """Remove only routes still owned by this instance, preserving later replacements.
+
+        仅移除仍归当前实例所有的路由，保留后续替代。
+        """
         routes = self.plugin.context.registered_web_apis
         routes[:] = [route for route in routes if route[1] != self.handle]
 
     async def _status(self) -> dict:
-        """汇总引擎、模型、任务与配置状态，不发送模型请求。
+        """Summarize engine, provider, task and configuration state without model calls; provider lookup failures affect only their checks.
 
-        Returns:
-            状态接口的数据；模型查询失败仅影响对应检查项。
+        汇总引擎、提供方、任务及配置状态，不调用模型，提供方查询失败仅影响对应检查项。
         """
         plugin = self.plugin
 
@@ -128,6 +138,8 @@ class WebRoutes:
                     "open_to",
                     "observe_groups",
                     "summary_time",
+                    "dream_time",
+                    "dream_enabled",
                     "weekly_day",
                     "idle_flush_seconds",
                     "checkpoint_seconds",
@@ -149,28 +161,24 @@ class WebRoutes:
         }
 
     async def handle(self, action: str):
-        """分发经过认证的管理操作。
+        """Dispatch an explicitly supported authenticated operation and return native JSON with bounded diagnostics or an error.
 
-        Args:
-            action: 明确支持的管理接口操作。
-
-        Returns:
-            宿主原生 JSON 响应，包含有界诊断信息或错误。
+        分发明确支持的已认证操作，返回包含有界诊断或错误的宿主原生 JSON。
         """
         from astrbot.api.web import error_response, json_response, request
 
         plugin = self.plugin
         if not request.username:
             return error_response("需要管理员登录", status_code=401)
-        read_actions = {"status", "records", "detail", "events", "traces"}
-        write_actions = {"update", "rollbackPersona", "diagnose", "task", "cancel"}
+        read_actions = {"status", "records", "detail", "events", "traces", "graph", "impressions", "dream", "packs", "pack", "packArtwork", "packExport"}
+        write_actions = {"update", "rollbackPersona", "diagnose", "task", "cancel", "persona"}
         if action not in read_actions | write_actions:
             return error_response("未知操作", status_code=404)
         if request.method != ("GET" if action in read_actions else "POST"):
             return error_response("请求方法不支持", status_code=405)
         try:
             if action == "traces":
-                return json_response(plugin.run_traces.snapshot(request.query.get("state", "all")))
+                return json_response(query_traces(plugin.run_traces.snapshot, request.query))
             if action == "events":
                 kind = request.query.get("kind", "")
                 status = request.query.get("status", "")
@@ -198,15 +206,35 @@ class WebRoutes:
                     "记忆引擎不可用，请检查运行检测与日志", status_code=503
                 )
             service = plugin.services.management_service
+            if action == "graph":
+                return json_response(service.graph())
+            if action == "impressions":
+                return json_response(service.impressions(offset=int(request.query.get("offset", "0"))))
+            if action == "dream":
+                return json_response(service.dream_journal())
+            if action == "packs":
+                return json_response(service.pack_catalog(request.query.get("collection", "official"), int(request.query.get("offset", "0"))))
+            if action == "packArtwork":
+                return json_response(service.pack_artwork(request.query.get("reference", "")))
+            if action == "packExport":
+                return json_response(service.pack_export(request.query.get("reference", "")))
+            if action == "pack":
+                return json_response(service.pack_detail(request.query.get("reference", "")))
             if action == "records":
                 return json_response({"records": service.catalog()})
             if action == "detail":
                 return json_response(service.detail(request.query.get("id", "")))
-            if len(await request.body()) > 65536:
+            if len(await request.body()) > (3 * 1024 * 1024 if action == "persona" else 65536):
                 return error_response("请求内容过大", status_code=413)
             body = await request.json()
             if not isinstance(body, dict):
                 raise ValueError("请求体必须为 JSON 对象")
+            if action == "persona":
+                if plugin.jobs.task is not None and not plugin.jobs.task.done():
+                    return error_response("维护任务运行中，请稍后操作", status_code=409)
+                result = service.persona_action(body)
+                plugin.journal.record("persona", "succeeded", "人格包操作已完成")
+                return json_response(result)
             if action == "diagnose":
                 with plugin.journal.span("diagnose", "recall.preview") as metrics:
                     result = service.diagnose(body)
@@ -254,6 +282,8 @@ class WebRoutes:
         except LookupError:
             return error_response("记忆不存在，请刷新列表", status_code=404)
         except ValueError as exc:
+            if str(exc) == "pack_changed":
+                return error_response("人格包内容已更新，请重新打开预览后确认安装", status_code=409)
             if str(exc) == "revision_conflict":
                 return error_response(
                     "记忆已被修改，请重新加载后再保存", status_code=409

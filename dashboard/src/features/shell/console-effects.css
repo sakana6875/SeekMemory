@@ -1,0 +1,114 @@
+/* Glass belongs to navigation and grouped panels, not every table row. */
+.console-sidebar {
+  box-shadow: inset -1px 0 var(--glass-highlight);
+}
+.console-panel {
+  border-color: var(--glass-border);
+  box-shadow:
+    inset 0 1px var(--glass-highlight),
+    var(--glass-shadow);
+}
+.console-hero-action {
+  box-shadow:
+    inset 0 1px var(--glass-highlight),
+    var(--glass-shadow);
+}
+@supports (backdrop-filter: blur(1px)) {
+  .console-panel {
+    background:
+      linear-gradient(135deg, var(--glass-tint), transparent 70%),
+      var(--surface-glass);
+    backdrop-filter: blur(18px) saturate(115%);
+  }
+  .console-hero-action {
+    backdrop-filter: blur(12px);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .console-workspace {
+    transition: grid-template-columns 280ms var(--motion-ease);
+  }
+  .console-sidebar {
+    transition: padding 280ms var(--motion-ease);
+  }
+  .console-content > main {
+    animation: console-page-enter 240ms ease-out;
+  }
+  .console-page-intro,
+  .stage-copy {
+    animation: console-content-enter 360ms var(--motion-ease);
+  }
+  .sidebar-submenu {
+    animation: console-content-enter 220ms var(--motion-ease);
+  }
+  .sidebar-chevron {
+    transition: transform 220ms var(--motion-ease);
+  }
+  .console-sidebar nav a,
+  .sidebar-system-toggle {
+    transition:
+      background-color 180ms ease,
+      color 180ms ease;
+  }
+  .console-hero-action,
+  .revision-body,
+  .impression-card,
+  .seed-card,
+  .dream-card {
+    transition:
+      transform 220ms var(--motion-ease),
+      box-shadow 220ms ease,
+      border-color 180ms ease,
+      background-color 180ms ease;
+  }
+  .console-link svg,
+  .console-hero-action svg {
+    transition: transform 220ms var(--motion-ease);
+  }
+  .console-link:hover svg,
+  .console-hero-action:hover svg {
+    transform: translate(2px, -2px);
+  }
+  @media (hover: hover) {
+    .console-hero-action:hover,
+    .persona-revision:hover .revision-body,
+    .impression-card:hover,
+    .seed-card:hover,
+    .dream-card:hover {
+      transform: translateY(-2px);
+      box-shadow:
+        inset 0 1px var(--glass-highlight),
+        var(--glass-hover-shadow);
+    }
+  }
+}
+
+@keyframes console-page-enter {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes console-content-enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .console-workspace *,
+  .console-workspace *::before,
+  .console-workspace *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}
