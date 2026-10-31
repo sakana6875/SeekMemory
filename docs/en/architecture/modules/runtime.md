@@ -39,9 +39,11 @@ runtime_gate_enabled defaults to false. While disabled, wait and background defe
 
 RunRecorder is the single runtime write-back coordinator for Sources, pending projection, checkpoint, and episodes. run_id and deterministic Source IDs prevent repeated callbacks from duplicating writes. runtime_episodes is append-only business audit metadata; RunTracer/TraceStore is a field-whitelisted diagnostic timeline. They are separate and neither stores conversation bodies.
 
+Completed user receipts and pending user writeback use the existing Source ID as their internal key, preserving session, speaker, and text identity boundaries. Sessions may reuse event IDs, while exact message replays remain idempotent. Public turn_id values retain the original event_id, or the Source ID when absent.
+
 ### Run trace event boundary
 
-RunTracer in `app/runtime/tracing.py` is a host-neutral producer; events need only get_extra/set_extra for correlation. `core/trace.py` owns field cleaning and run projection; `store/run_trace.py` owns JSONL persistence. Management queries consume the same snapshot; see [WebUI](webui.md#run-trace-queries).
+RunTracer in `app/runtime/tracing.py` is a host-neutral producer; events need only get_extra/set_extra for correlation. `core/domain/operations/trace.py` owns field cleaning and run projection; `store/run_trace.py` owns JSONL persistence. Management queries consume the same snapshot; see [WebUI](webui.md#run-trace-queries).
 
 | Event | Observation |
 |---|---|
@@ -72,3 +74,7 @@ The facade remains in runtime.py; transitions.py computes detached state only, d
 File audit retries recognize complete saved rows through existing `session_id/run_id` fields. An uncertain append reloads persisted identities before retrying. This covers a single instance and complete rows seen by a new instance, not cross-process file locking, and adds no file fields.
 
 Memory context construction uses the pure `RecallService.query()`. Explicit inclusion recording is forwarded through the optional generic `MemoryContextRecorder`; ordinary host hooks call it after request attachment, background dispatch immediately before model invocation. The runtime contains no designated rules. Existing `RecallService.build()` remains a compatibility query-plus-recording entry.
+
+Attention and proactive selection policies are owned by `app/runtime/policy/attention.py` and `proactive.py`. Legacy `app.runtime.attention` and `proactive` imports remain aliases of the same module objects. Tool policy remains in `app/runtime/tools.py` because it also exposes a host-shaped filter. `contracts/` still declares data and ports; `runtime.py`, `dispatch.py`, and `actions.py` still own execution and effects. This is a file move only; policy, scheduling, and interruption semantics are unchanged.
+
+`app/runtime/contracts/context.py` defines the `MemoryContextRequest` and `MemoryContext` data contracts. `app/runtime/port/capabilities.py` owns the external capability protocols formerly declared in `contracts/ports.py` (clock, model, memory, sending and repositories). The historical `contracts/ports.py` re-exports the same objects. `SessionStateStore` and `ActionPort`, which are closely tied to their state/action DTOs, remain in their existing contract files; this layout change does not redefine their ownership.

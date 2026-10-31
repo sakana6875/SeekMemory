@@ -10,14 +10,20 @@ core 定义记忆领域的稳定词汇和不依赖 IO 的决策。它不负责 S
 
 本模块将对外提供的能力和要求外部提供的能力分开，两个入口只包含显式导出或协议声明，配有中英混合行为说明，不实现业务：
 
-- **对外提供 — [`core/domain.py`](../../../../core/domain.py)**：领域类型，以及记忆构造/修订/校验、消息编号、版本检查、强度、披露、图、容量、人格、关系/互动和追踪整理能力。函数与类型直接沿用原对象，完整调用参数可由原定义或 `inspect.signature()` 查看；没有包装函数或空实现。
-- **要求外部提供 — [`core/ports.py`](../../../../core/ports.py)**：`GraphArtifactStore` 的连接读写。每个方法说明返回值、读写影响和必要的失败约定；实现由外部注入，连接生命周期也由外部管理。
+- **对外提供 — [`core/domain/`](../../../../core/domain/)**：领域类型，以及记忆构造/修订/校验、消息编号、版本检查、强度、披露、图、容量、人格、关系/互动和追踪整理能力。函数与类型直接沿用原对象，完整调用参数可由原定义或 `inspect.signature()` 查看；没有包装函数或空实现。
+- **要求外部提供 — [`core/port/`](../../../../core/port/)**：`GraphArtifactStore` 的连接读写及 `TreeEdgeReader` 的树连接只读能力。每个方法说明返回值、读写影响和必要的失败约定；实现由外部注入，连接生命周期也由外部管理。
 
-调用方使用 `from core.domain import make, Graph` 获取领域能力，使用 `from core.ports import GraphArtifactStore` 获取依赖声明；插件包中使用相应的相对导入。`core.artifact`、`core.graph` 等领域实现入口继续有效，`core.graph.GraphArtifactStore` 是端口声明的同一对象。图实现直接引用 `ports.py`，`domain.py` 正常导出图类型，不再需要延迟绑定。原内部 `core.interfaces` 入口已移除。
+调用方使用 `from core.domain import make, Graph` 获取领域能力，使用 `from core.port import GraphArtifactStore` 获取依赖声明；插件包中使用相应的相对导入。领域实现按能力收在 `core/domain/`，图存储协议在 `core/port/graph.py`；`core.artifact`、`core.graph` 和 `core.ports` 等旧路径由 `core/_legacy.py` 注册为兼容别名，不再保留根目录转发文件，`core.graph.GraphArtifactStore` 与新端口为同一对象。目录入口只导出能力，不承担业务实现；新代码优先导入所属的领域文件或 `core.port`。原内部 `core.interfaces` 入口已移除。
 
 树的完整读写协调由 [TreeService](services.md) 负责，内部入口为 `from services import TreeService`；原 `core.tree` 及 core 的树相关导出已移除。树所需的 `TreeArtifactStore`、`TreeCache` 声明位于 `app/ports.py`，core 不反向引用应用层或服务层。
 
 `make`/`revise` 仍读取系统时间，`load_thresholds` 仍读取环境变量。`Graph` 通过注入对象读写连接；`edges_of` 查询连接两端但不返回原方向。
+
+模型调用不属于 `core.port`：抽取模型协议由 `app.ports.ChatModel` 持有，运行时文本协议由 `app.runtime.contracts.ModelGateway` 持有，AstrBot 提供方在边缘适配。目录迁移不改变模型选择或调用行为。
+
+`core/domain/memory/tree.py` 经有向 `tree_child:<父节点 ID>` 边返回多个父节点；祖先广度查询分别限制深度、单节点父数和访问总数，并去重截环。`TreeService` 接收多个父节点 ID，验证身份与状态，在 Artifact 提交后仅写树边。既有单值 `nodes.parent` 列仍留在数据库结构中，但不再读写为树关系；不自动迁移，旧库若存在只有父字段而没有树边的关系，启用树查询时回退到平面召回。
+
+领域实现现在按 `core/domain/memory/`（证据、版本、检索与披露）、`character/`（人格）、`social/`（关系与互动）、`operations/`（容量与追踪）分组；`core/families/` 保持 payload 校验归属，`core/port/` 仅声明领域实际依赖的图存储协议。`core.domain` 继续集中导出稳定 API；旧 `core.<module>` 与 `core.domain.<module>` 路径指向同一实现模块，不重复维护规则。应用运行时的契约继续留在 `app/runtime/contracts/`，不搬入记忆领域的端口。
 
 ## 数据模型
 
@@ -57,9 +63,9 @@ family 校验器位于 core/families。make 只构造对象，不自动校验；
 
 | 类别 | 唯一归属与使用方式 |
 |---|---|
-| 算法内部参数 | 遗忘的情绪系数及显著度范围在 `strength.py`；披露阈值在 `disclosure.py`；关系 V2 的证据影响、衰减和冷却在 `relationship_rules.py`。内部名称不自动从 `domain.py` 导出，也不自动成为用户配置。 |
-| 已有可配置策略值 | `CapacityThresholds` 与 `RelationshipScoringPolicy` 分别保留本领域的参数；关系配置由服务层规范化。V1 互动规则及关系回复门控已停用。 |
-| 数据约定 | 记忆类别、消息角色、操作名称及人格来源仍由各自领域维护；`relationship.py` 定义 V2 快照和策略版本。family 校验器继续接受历史 V1 内容，但不将旧 affinity 迁入 V2。追踪中的披露合法值由 `DisclosureLevel` 派生。 |
+| 内部算法参数 | 情绪因子与显著性边界归 `strength.py`，披露阈值归 `disclosure.py`，关系 V2 的证据影响、衰减及冷却归 `relationship_rules.py`。新增私有名称不会自动由 `domain.py` 导出或暴露为配置。 |
+| 现有可配置策略值 | `CapacityThresholds` 与 `RelationshipScoringPolicy` 保留各自参数，关系配置由服务层规范化。V1 互动规则及关系回复门控已退役。 |
+| 数据契约 | family 名称、Source 角色、操作名及人格来源保留各自领域归属。`relationship.py` 持有 V2 快照及策略标识；family 校验仍接受历史 V1 payload，但不将 affinity 提升为 V2。追踪从 `DisclosureLevel` 导出允许的披露值。 |
 | 校验与诊断限制 | 人格文件长度限制留在 `persona.py`，自我印象信任要求留在 `bot_behavior.py`，追踪数量上限和白名单留在 `trace.py`。 |
 
 无关的对外常量保持原导出。V2 移除 V1 档位和互动导出，不保留过时评分行为。
@@ -68,7 +74,7 @@ family 校验器位于 core/families。make 只构造对象，不自动校验；
 
 Source 是追加式事实；Artifact 是可修订解释。内容修订通过仓储的 expected_revision CAS 提交，不能以新对象覆盖旧 ID 的版本历史。subject_id、said_by、来源会话和 evidence 不可相互推断替代。payload 的结构由 family validator 维护。
 
-实现入口：[artifact.py](../../../../core/artifact.py)、[source.py](../../../../core/source.py)、[disclosure.py](../../../../core/disclosure.py)、[versioning.py](../../../../core/versioning.py)。
+实现入口：[artifact.py](../../../../core/domain/memory/artifact.py)、[source.py](../../../../core/domain/memory/source.py)、[disclosure.py](../../../../core/domain/memory/disclosure.py)、[versioning.py](../../../../core/domain/memory/versioning.py)。
 
 <a id="core-verification"></a>
 

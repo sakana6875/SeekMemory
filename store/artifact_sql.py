@@ -12,7 +12,7 @@ UPSERT_SQL = (
     "said_by, shareable, created_at, updated_at, revision, lineage, subject_id) "
     "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET "
     "family=excluded.family, level=excluded.level, "
-    "parent=COALESCE(excluded.parent, nodes.parent), blob=excluded.blob, "
+    "blob=excluded.blob, "
     "state=excluded.state, scope=excluded.scope, strength=excluded.strength, "
     "time=excluded.time, said_by=excluded.said_by, shareable=excluded.shareable, "
     "revision=excluded.revision, lineage=excluded.lineage, subject_id=excluded.subject_id, "

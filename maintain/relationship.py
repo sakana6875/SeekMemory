@@ -12,18 +12,18 @@ from .writer import MaintenanceWriter
 
 try:
     from ..app.ports import RelationshipEventStore
-    from ..core.artifact import Lineage, make, revise, validate
-    from ..core.relationship import RELATIONSHIP_POLICY_VERSION, SUMMARY, relationship_id
-    from ..core.relationship_rules import (
+    from ..core.domain.memory.artifact import Lineage, make, revise, validate
+    from ..core.domain.social.relationship import RELATIONSHIP_POLICY_VERSION, SUMMARY, relationship_id
+    from ..core.domain.social.relationship_rules import (
         ConversationScope, RelationshipCandidate, RelationshipReason,
         RelationshipScoringPolicy, RelationshipStrength, VERIFIER_VERSION,
         VerifiedRelationshipEvent, project_relationship, relationship_event_id,
     )
 except ImportError:
     from app.ports import RelationshipEventStore
-    from core.artifact import Lineage, make, revise, validate
-    from core.relationship import RELATIONSHIP_POLICY_VERSION, SUMMARY, relationship_id
-    from core.relationship_rules import (
+    from core.domain.memory.artifact import Lineage, make, revise, validate
+    from core.domain.social.relationship import RELATIONSHIP_POLICY_VERSION, SUMMARY, relationship_id
+    from core.domain.social.relationship_rules import (
         ConversationScope, RelationshipCandidate, RelationshipReason,
         RelationshipScoringPolicy, RelationshipStrength, VERIFIER_VERSION,
         VerifiedRelationshipEvent, project_relationship, relationship_event_id,

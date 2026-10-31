@@ -5,12 +5,23 @@
 ### 中文
 - 修复关系 V2：已核验事件按显式时间回放熟悉、信任、温度、张力、稳定性与置信度，关联修复降低对应张力；按 subject 提交带 Source 证据与版本历史的 Artifact，读取坏旧行时保持中性。V1 历史只在 Source 可归属且有时区时进入独立复核队列，旧 affinity 不复制。观察期不影响回复或语气；不重置已有数据、不新增表或配置。离线误报率由真实模型评测产生，未运行时不报告数值。每周语义核验兼容 AstrBot 包模式，关系衰减兼容 Python 3.10（#163）。
 
+- #183 以现有树边表达多父关系，移除唯一父节点查询与单父字段写入。旧列保留但不用于树语义，旧库缺边时只读回退平面召回，不自动迁移。树查询分别限制深度、分支、访问量和结果数，合成相关性、路径距离及证据支持分后仍经披露；同主体、同范围、当前版本与 Source 证据仍是硬约束。内部开关默认关闭，不改公开配置或数据库结构。
+
+- 修复用户消息跨会话复用 event_id 时被误去重的问题：RunRecorder 的已完成记录与待补偿写入统一按现有 Source ID 区分，保留同一消息重放的幂等性及对外 turn_id，无数据格式或配置变化（#187）。
+
 ### English
+
 - Repair Relationship V2: replay verified events at an explicit clock into familiarity, trust, warmth, tension, stability, and confidence, with linked repair reducing its prior tension; commit per-subject Artifacts with Source evidence and version history, and treat invalid legacy rows as neutral. Queue V1 history for independent verification only when Sources are attributable and timezone-aware, without copying affinity. Observation does not change replies or tone; existing data remains intact with no new tables or config. Offline false-positive rates require a real model evaluation and are not reported otherwise. Weekly semantic verification works in AstrBot package mode, and relationship decay supports Python 3.10 (#163).
+
+- #183 uses existing tree edges for multiple parents and removes unique-parent lookup and writes to the single-parent column. The old column remains inert; missing legacy edges trigger read-only flat-recall fallback without automatic migration. Depth, fan-out, visits and results are bounded, with query relevance, path distance and evidence support ranked before disclosure. Same subject/scope, current version and Source evidence remain hard guards. The internal rollout is off by default; no public configuration or schema change.
+
+- Fix user messages being incorrectly deduplicated when event IDs are reused across sessions: RunRecorder keys completed and pending user writeback by the existing Source ID, preserving exact replay idempotency and public turn_id values. No data-format or configuration changes (#187).
 
 ## 0.5.1 — 2026-10-28
 
 ### 中文
+
+- 将树的唯一父节点和有界祖先查询归入 core 的只读领域规则，遇到环或多父节点歧义时停止；TreeService 保留写入协调，树边编码、已存数据和配置不变。
 
 - 将指定记忆的纯触发/给出规则从兼容写入入口分开，解除上下文记录器的内部反向依赖，保留旧导入别名和规则行为。
 
@@ -57,6 +68,8 @@
 - 回归测试覆盖：At 组件识别、wake-all 不再算点名、主人开关、陪聊轮数。
 
 ### English
+
+- Move unique-parent and bounded ancestor reads into core read-only tree rules, stopping on cycles or ambiguous parents; TreeService still coordinates writes. Stored edge encoding, data, and configuration are unchanged.
 
 - Separate pure designated trigger/given predicates from the compatible recording entry, removing the context writer’s reverse implementation dependency while preserving old aliases and rule behavior.
 
@@ -128,6 +141,8 @@
 
 ### 中文
 
+- 将 core 的领域实现归入 `core/domain/`，图存储协议归入 `core/port/`；旧模块导入与 `core.ports` 保留同一对象的兼容入口。移除 `main.py` 整文件 40 行上限测试，保留入口职责边界检查。未改模型调用、持久化格式或公开配置。
+
 - 运行轨迹新增宿主无关的运行编号、结果及时间范围查询，AstrBot 与独立 HTTP 共用契约；控制台可定位已记录的失败步骤，并标明未结束或不完整时间轴。保留既有白名单、只读边界和响应格式；切换查询时丢弃迟到结果，不新增数据库或公开配置。
 
 - 修复独立控制台启动和读取时隐式裁剪历史 trace；轨迹只读筛选，不改写原文件。HTTP 连接并行读写，管理操作继续在单个 SQLite 所属线程串行执行，避免空闲连接阻塞正常请求；保持 API、配置与数据格式兼容。
@@ -189,6 +204,8 @@
 - 人格控制台接入历史版本回滚、差异比较与变化原因；安装时校验预览内容，按版本显示已安装状态；Dream 日志区分预算停止与完成，并显示调度开关。新增控制台接口需与 dashboard 同步更新，不涉及数据库迁移或配置变化（#82 / #83）。
 
 ### English
+
+- Group core domain implementations under `core/domain/` and the graph storage protocol under `core/port/`; legacy module imports and `core.ports` still resolve to the same objects. Remove the whole-file 40-line limit test for `main.py` while retaining entry-point ownership checks. Model calls, persisted formats and public configuration are unchanged.
 
 - Add host-neutral run ID, result and time-range queries with a shared contract for AstrBot and standalone HTTP. The console locates recorded failure steps and marks unfinished or partial timelines. Preserve the allowlist, read-only boundary and response format, discard late query results, and add no database or public configuration changes.
 

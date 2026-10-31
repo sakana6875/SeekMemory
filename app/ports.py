@@ -11,18 +11,18 @@ from __future__ import annotations
 from typing import Any, Protocol, runtime_checkable
 
 try:
-    from ..core.artifact import Artifact
-    from ..core.graph import ArtifactEdge
-    from ..core.source import Source
-    from ..core.versioning import StateEvent
-    from ..core.retrieval import RetrievalCandidate
+    from ..core.domain.memory.artifact import Artifact
+    from ..core.domain.memory.graph import ArtifactEdge
+    from ..core.domain.memory.source import Source
+    from ..core.domain.memory.versioning import StateEvent
+    from ..core.domain.memory.retrieval import RetrievalCandidate
     from .contracts import ChatRequest, ChatResponse
 except ImportError:
-    from core.artifact import Artifact
-    from core.graph import ArtifactEdge
-    from core.source import Source
-    from core.versioning import StateEvent
-    from core.retrieval import RetrievalCandidate
+    from core.domain.memory.artifact import Artifact
+    from core.domain.memory.graph import ArtifactEdge
+    from core.domain.memory.source import Source
+    from core.domain.memory.versioning import StateEvent
+    from core.domain.memory.retrieval import RetrievalCandidate
     from app.contracts import ChatRequest, ChatResponse
 
 
@@ -71,7 +71,7 @@ class ArtifactStore(Protocol):
     """Read memory revisions and commit version/evidence/ledger together.
 
     读取记忆版本；commit 原子保存版本、证据及账本，失败不得更新缓存。
-    Separate graph/parent calls are not part of commit / 连接和父节点调用不属于该原子提交。
+    Separate graph calls are not part of commit / 连接调用不属于该原子提交。
     """
 
     def commit(self, art: Artifact, *, expected_revision: int, op: str,
@@ -125,9 +125,6 @@ class ArtifactStore(Protocol):
     def edges_of(self, node_id: str) -> list[tuple[str, str, float]]:
         """Read both ends as (other ID, kind, weight); direction is omitted / 返回双向连接的（另一端编号、类型、权重），不含方向。"""
         ...
-    def set_parent(self, node_id: str, parent_id: str | None) -> None:
-        """Set only the parent field; does not maintain edges / 仅设置父字段，不维护连接。"""
-        ...
     def inspect_record(self, node_id: str) -> dict:
         """Read version, evidence and ledger detail for inspection / 读取供检查的版本、证据及账本细节。"""
         ...
@@ -157,14 +154,20 @@ class TreeArtifactStore(Protocol):
     def edges_of(self, node_id: str) -> list[tuple[str, str, float]]:
         """Read (other ID, kind, weight) from both ends; direction omitted / 双向查询连接，返回另一端、类型、权重，不含方向。"""
         ...
+    def legacy_tree_gap_count(self) -> int:
+        """Count legacy-only parent links without modifying them / 统计无树边的旧父关系，不修改。"""
+        ...
+    def tree_parents(self, node_id: str, limit: int) -> list[str]:
+        """Read ordered parent IDs with an SQL limit / 在 SQL 侧限制并排序父节点编号。"""
+        ...
+    def tree_children(self, node_id: str, limit: int) -> list[str]:
+        """Read ordered child IDs with an SQL limit / 在 SQL 侧限制并排序子节点编号。"""
+        ...
 
     def add_edge(self, src: str, dst: str, kind: str, weight: float) -> None:
         """Upsert one edge; does not change the parent column / 写入或更新一条连接，不修改父节点字段。"""
         ...
 
-    def set_parent(self, node_id: str, parent_id: str | None) -> None:
-        """Set/clear only the parent column; absent child is a no-op / 仅设置或清空父字段，不维护连接；子节点不存在则无操作。"""
-        ...
 
 
 class TreeCache(Protocol):

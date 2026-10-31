@@ -29,13 +29,13 @@ except ImportError:
     from sqlite import SqliteRepository, dump_json, now_iso
 
 try:
-    from ..core.graph import ArtifactEdge
-    from ..core.artifact import Artifact
-    from ..core.versioning import StateEvent, VersionError, assert_next_revision
+    from ..core.domain.memory.graph import ArtifactEdge
+    from ..core.domain.memory.artifact import Artifact
+    from ..core.domain.memory.versioning import StateEvent, VersionError, assert_next_revision
 except ImportError:
-    from core.graph import ArtifactEdge
-    from core.artifact import Artifact
-    from core.versioning import StateEvent, VersionError, assert_next_revision
+    from core.domain.memory.graph import ArtifactEdge
+    from core.domain.memory.artifact import Artifact
+    from core.domain.memory.versioning import StateEvent, VersionError, assert_next_revision
 
 
 _COMMIT_OPERATIONS = frozenset({
@@ -190,14 +190,6 @@ class ArtifactRepository(SqliteRepository):
         rows = self.conn.execute(sql + " ORDER BY n.created_at, n.id", args).fetchall()
         return [art for art in map(row_to_artifact, rows) if art is not None]
 
-    def set_parent(self, node_id: str, parent_id: str | None) -> None:
-        """Write only the compatibility parent column; do not maintain graph edges or version snapshots / 仅写入兼容父字段，不维护图连接或版本快照。"""
-        with self.conn:
-            self.conn.execute(
-                "UPDATE nodes SET parent = ?, updated_at = ? WHERE id = ?",
-                (parent_id, now_iso(), str(node_id)),
-            )
-
     def list_recent(self, limit: int) -> list[Artifact]:
         """Read a bounded recent-memory snapshot before decoding payloads / 先限量读取近期记忆快照，再解析正文。"""
         if not 1 <= limit <= 120:
@@ -271,6 +263,47 @@ class ArtifactRepository(SqliteRepository):
                 "ON CONFLICT(src, dst, kind) DO UPDATE SET weight=excluded.weight",
                 (src, dst, kind, float(weight)),
             )
+
+    def legacy_tree_gap_count(self) -> int:
+        """Count single-parent rows without a corresponding tree edge; never repair on read.
+
+        统计只有旧单父字段而没有树边的关系；读取时绝不暗中修补。
+        """
+        row = self.conn.execute(
+            "SELECT COUNT(*) AS total FROM nodes n WHERE n.parent IS NOT NULL "
+            "AND n.parent != '' AND NOT EXISTS (SELECT 1 FROM edges e "
+            "WHERE e.src = n.parent AND e.dst = n.id "
+            "AND e.kind = 'tree_child:' || e.src)"
+        ).fetchone()
+        return int(row["total"])
+
+    def tree_parents(self, node_id: str, limit: int) -> list[str]:
+        """Read directionally valid parent edges with a database-side cap.
+
+        在 SQL 层限制并验证指向子节点的父边。
+        """
+        if limit < 1:
+            raise ValueError("tree limit must be positive")
+        rows = self.conn.execute(
+            "SELECT src FROM edges WHERE dst = ? AND src != dst "
+            "AND kind = 'tree_child:' || src ORDER BY src LIMIT ?",
+            (node_id, limit),
+        ).fetchall()
+        return [str(row["src"]) for row in rows]
+
+    def tree_children(self, node_id: str, limit: int) -> list[str]:
+        """Read directionally valid child edges with a database-side cap.
+
+        在 SQL 层限制并验证指向子节点的父边。
+        """
+        if limit < 1:
+            raise ValueError("tree limit must be positive")
+        rows = self.conn.execute(
+            "SELECT dst FROM edges WHERE src = ? AND src != dst "
+            "AND kind = 'tree_child:' || src ORDER BY dst LIMIT ?",
+            (node_id, limit),
+        ).fetchall()
+        return [str(row["dst"]) for row in rows]
 
     def edges_of(self, node_id: str) -> list[tuple[str, str, float]]:
         """Read both endpoints as other-ID, kind and weight; omit direction / 读取两端连接的另一端编号、类型及权重，不包含方向。"""

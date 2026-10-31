@@ -66,8 +66,8 @@ def _exercise(db) -> None:
         db.artifacts.upsert(art)
         cache.put(art)
 
-    tree.add_under(scene, impression.header.id)
-    tree.add_under(detail, scene.header.id)
+    tree.add_under(scene, (impression.header.id,))
+    tree.add_under(detail, (scene.header.id,))
     graph.link(scene.header.id, detail.header.id, "causal", 0.8)
     ledger.append("create", impression.header.id, None, "h1", "初版")
 

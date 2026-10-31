@@ -13,16 +13,16 @@ from typing import Any, Mapping
 
 try:
     from ..app.contracts import ChatRequest
-    from ..core.relationship_rules import (
+    from ..core.domain.social.relationship_rules import (
         ConversationScope, EVIDENCE_RULES, RelationshipCandidate, RelationshipReason, RelationshipStrength,
     )
-    from ..core.source import Source
+    from ..core.domain.memory.source import Source
 except ImportError:
     from app.contracts import ChatRequest
-    from core.relationship_rules import (
+    from core.domain.social.relationship_rules import (
         ConversationScope, EVIDENCE_RULES, RelationshipCandidate, RelationshipReason, RelationshipStrength,
     )
-    from core.source import Source
+    from core.domain.memory.source import Source
 
 SEPARATOR = "\x1d"
 

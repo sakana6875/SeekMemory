@@ -13,8 +13,8 @@ from typing import Any
 
 try:  # Plugin namespace / 插件命名空间。
     from ..app.contracts import DialogueTurn, WriteOutcome
-    from ..core.artifact import Artifact, Lineage, Strength, TimeSpan, content_of, make, validate
-    from ..core.relationship_rules import (
+    from ..core.domain.memory.artifact import Artifact, Lineage, Strength, TimeSpan, content_of, make, validate
+    from ..core.domain.social.relationship_rules import (
         ConversationScope, RelationshipCandidate, RelationshipReason, RelationshipStrength,
     )
     from ..perceive.behavior import (
@@ -36,13 +36,14 @@ try:  # Plugin namespace / 插件命名空间。
     )
     from ..perceive.relationship import (
         is_relationship_observation,
+        observation_boundary,
         validate_observation,
     )
     from ..app.ports import ArtifactCache, SourceStore
 except ImportError:  # Top-level package / 顶层包。
     from app.contracts import DialogueTurn, WriteOutcome
-    from core.artifact import Artifact, Lineage, Strength, TimeSpan, content_of, make, validate
-    from core.relationship_rules import (
+    from core.domain.memory.artifact import Artifact, Lineage, Strength, TimeSpan, content_of, make, validate
+    from core.domain.social.relationship_rules import (
         ConversationScope, RelationshipCandidate, RelationshipReason, RelationshipStrength,
     )
     from app.ports import ArtifactCache, SourceStore
@@ -66,6 +67,7 @@ except ImportError:  # Top-level package / 顶层包。
     )
     from perceive.relationship import (
         is_relationship_observation,
+        observation_boundary,
         validate_observation,
     )
 

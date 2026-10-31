@@ -8,15 +8,13 @@ from __future__ import annotations
 try:
     from ..app.ports import TreeArtifactStore, TreeCache
     from ..app.revision_plan import prepare_revision
-    from ..core.artifact import Artifact, revise
+    from ..core.domain.memory.artifact import Artifact, revise
+    from ..core.domain.memory.tree import ancestor_ids, parent_ids, tree_child_kind
 except ImportError:
     from app.ports import TreeArtifactStore, TreeCache
     from app.revision_plan import prepare_revision
-    from core.artifact import Artifact, revise
-
-EDGE_PREFIX = "tree_child:"
-LEVELS = ("impression", "scene", "detail")
-
+    from core.domain.memory.artifact import Artifact, revise
+    from core.domain.memory.tree import ancestor_ids, parent_ids, tree_child_kind
 
 class TreeService:
     """Read tree memory and commit before separate cache, parent and edge writes; failures propagate / 读取树记忆，提交后分别写缓存、父节点和连接，失败向上传递。"""
@@ -47,22 +45,31 @@ class TreeService:
         if self.cache is not None:
             self.cache.put(art)
 
-    def children(self, node_id: str) -> list[Artifact]:
-        """Read distinct existing children from stored tree edges / 根据已存树连接读取去重且仍存在的子节点。"""
+    def legacy_gap_count(self) -> int:
+        """Expose only the count of unmigrated legacy links / 仅暴露未迁移旧连接的数量。"""
+        return self.artifacts.legacy_tree_gap_count()
+
+    def parents(self, node_id: str, *, limit: int = 8) -> tuple[str, ...]:
+        """Read all bounded parent IDs from tree edges / 从树边读取有限数量的父节点。"""
+        return parent_ids(node_id, self.artifacts, limit=limit)
+
+    def ancestor_ids(self, node_id: str, *, max_depth: int = 3,
+                     max_visits: int = 32, max_parents: int = 8) -> tuple[str, ...]:
+        """Read multi-parent ancestry without writes / 只读查询多父祖先。"""
+        return ancestor_ids(node_id, self.artifacts, max_depth=max_depth,
+                            max_visits=max_visits, max_parents=max_parents)
+
+    def children(self, node_id: str, *, limit: int = 8) -> list[Artifact]:
+        """Read bounded existing children, cache first; no cache fill.
+
+        有界读取当前子节点，先缓存后仓储，不回填缓存。
+        """
         if not node_id:
             return []
-        wanted = EDGE_PREFIX + node_id
         result: list[Artifact] = []
-        seen: set[str] = set()
-        for edge in self.artifacts.edges_of(node_id):
-            if len(edge) < 3:
-                continue
-            other, kind = edge[0], edge[1]
-            if kind != wanted or not other or other in seen:
-                continue
-            art = self._get(other)
+        for child_id in self.artifacts.tree_children(node_id, limit):
+            art = self._get(child_id)
             if art is not None:
-                seen.add(other)
                 result.append(art)
         return result
 
@@ -78,14 +85,28 @@ class TreeService:
             and art.payload.get("level") == "impression"
         ]
 
-    def add_under(self, child: Artifact, parent_id: str | None) -> Artifact:
-        """Commit a child, then write parent and edge separately; return the original input / 提交子节点，再分别写父节点及连接，返回原输入对象。"""
-        if parent_id is not None and parent_id == child.header.id:
+    def add_under(self, child: Artifact, parents: tuple[str, ...]) -> Artifact:
+        """Validate all parents, commit child and add each edge; no single-parent write.
+
+        先验证所有父节点，再提交子节点及逐条写边；不写单值父字段。
+        """
+        parent_ids = tuple(dict.fromkeys(parents))
+        if len(parent_ids) > 8:
+            raise ValueError("too many parents")
+        if child.header.id in parent_ids:
             raise ValueError("node cannot be its own parent")
+        for parent_id in parent_ids:
+            parent = self.artifacts.get(parent_id)
+            if (parent is None or parent.header.family != "memory"
+                    or parent.header.state != "active"
+                    or (parent.header.subject_id, parent.header.scope) !=
+                    (child.header.subject_id, child.header.scope)):
+                raise ValueError("parent identity or state invalid")
+            if child.header.id in self.ancestor_ids(parent_id, max_depth=3,
+                                                     max_visits=32, max_parents=8):
+                raise ValueError("tree cycle")
         self._persist(child)
-        self.artifacts.set_parent(child.header.id, parent_id)
-        if parent_id is not None:
-            self.artifacts.add_edge(
-                parent_id, child.header.id, EDGE_PREFIX + parent_id, 1.0
-            )
+        for parent_id in parent_ids:
+            self.artifacts.add_edge(parent_id, child.header.id,
+                                    tree_child_kind(parent_id), 1.0)
         return child

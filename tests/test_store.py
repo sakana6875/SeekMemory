@@ -219,17 +219,22 @@ class DBTest(_StoreCase):
         similar = [edge for edge in _edges(self.db, left.header.id) if edge[0] == right.header.id]
         self.assertEqual(similar, [(right.header.id, "similar", 0.9)])
 
-    def test_set_parent_persists_tree_parent_column(self) -> None:
-        """Tree parent persistence remains available through the artifact repo."""
-        parent = _memory("parent", "impression")
+    def test_multi_parent_edges_are_bounded_and_legacy_only_rows_detected(self) -> None:
         child = _memory("child", "scene")
-        for art in (parent, child):
+        first, second = _memory("first", "impression"), _memory("second", "impression")
+        for art in (first, second, child):
             self.db.artifacts.upsert(art)
-        self.db.artifacts.set_parent(child.header.id, parent.header.id)
-        row = self.db.conn.execute(
-            "SELECT parent FROM nodes WHERE id = ?", (child.header.id,)
-        ).fetchone()
-        self.assertEqual(row["parent"], parent.header.id)
+        for parent in (first, second):
+            self.db.artifacts.add_edge(parent.header.id, child.header.id,
+                                       "tree_child:" + parent.header.id, 1.0)
+        self.assertEqual(set(self.db.artifacts.tree_parents(child.header.id, 2)),
+                         {first.header.id, second.header.id})
+        self.assertEqual(len(self.db.artifacts.tree_parents(child.header.id, 1)), 1)
+        self.assertEqual(self.db.artifacts.tree_children(first.header.id, 1), [child.header.id])
+        self.assertEqual(self.db.artifacts.legacy_tree_gap_count(), 0)
+        self.db.conn.execute("UPDATE nodes SET parent = ? WHERE id = ?",
+                             ("missing_legacy_edge", child.header.id))
+        self.assertEqual(self.db.artifacts.legacy_tree_gap_count(), 1)
 
     def test_ledger_chain_is_continuous(self) -> None:
         """账本从空链开始，逐条 prev 指向上一条 self，整链可验证。"""

@@ -16,9 +16,9 @@ except ImportError:
     from sqlite import dump_json, load_json_object, pick_dataclass_fields
 
 try:
-    from ..core.artifact import Artifact, Header, Lineage, Strength, TimeSpan
+    from ..core.domain.memory.artifact import Artifact, Header, Lineage, Strength, TimeSpan
 except ImportError:
-    from core.artifact import Artifact, Header, Lineage, Strength, TimeSpan
+    from core.domain.memory.artifact import Artifact, Header, Lineage, Strength, TimeSpan
 
 try:
     from .artifact_sql import SELECT_SQL, UPSERT_SQL
@@ -35,12 +35,12 @@ def payload_blob(payload: dict[str, Any]) -> tuple[str, str]:
 def node_values(header: Header, payload: dict[str, Any], now: str,
                 blob: str | None = None) -> tuple:
     """Prepare positional node values using the existing persisted layout / 按既有持久化布局准备位置参数。"""
-    level, parent = payload.get("level"), payload.get("parent")
+    level = payload.get("level")
     return (
         header.id,
         header.family,
         level if isinstance(level, str) else None,
-        parent if isinstance(parent, str) else None,
+        None,  # Legacy column is inert; tree edges own all parent relations.
         blob or payload_blob(payload)[1],
         header.state,
         header.scope,

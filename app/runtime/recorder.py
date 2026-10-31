@@ -11,9 +11,9 @@ from typing import TYPE_CHECKING, Any, Iterable, Protocol
 from uuid import uuid4
 
 try:
-    from ...core.source import Source, make_source_id
+    from ...core.domain.memory.source import Source, make_source_id
 except ImportError:  # Top-level scripts/tests / 顶层脚本及测试导入
-    from core.source import Source, make_source_id
+    from core.domain.memory.source import Source, make_source_id
 from .episode import EpisodeRecord, normalize_tool_calls, safe_error_code
 
 if TYPE_CHECKING:
@@ -142,7 +142,7 @@ class RunRecorder:
             at=moment,
         )
         turn_id = str(event_id or source_id)
-        key = turn_id
+        key = source_id
         existing = self._turns.get(key)
         if existing is not None:
             return existing

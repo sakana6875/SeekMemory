@@ -13,7 +13,8 @@ recall selects active Artifacts relevant to the current input, decides what can 
 5. select scores literal, tag, emotion, activation, and lexical evidence, then applies an absolute/relative evidence gate. Weight, freshness, and recent-use status help rank candidates but cannot let an irrelevant item pass on their own.
 6. Explicit profile/topic recall may use a recent-memory fallback; when no candidates were selected, eligible inputs may use one deterministic drift candidate.
 7. If ordinary selection returns fewer than min(2, recall_k) items and the query has memory intent, a bounded recent Source fallback may run. It uses Source IDs to query Artifacts with evidence on their current revision, then repeats visibility, validity, and disclosure checks. Source text is never assembled.
-8. After disclosure, assemble orders persona, impression, scene, detail, fact, and example content, applies the budget, and returns final_ids / dropped_ids.
+8. An internally enabled, read-only `tree_query.py` stage expands selected anchors after Source fallback. It checks current revision, active state, same subject/scope and existing Source IDs for every added memory; traversals and additions have independent caps. Anchors remain first, then scored additions from multiple parent paths, descendants and bounded collateral branches fill at most `recall_k` slots. Existing query relevance, path distance and shared Source support contribute separately; path-count gains are capped. Depth, parent/child fan-out, visited edges and final IDs are independently bounded. Tree errors and detected legacy parent-only links restore the original flat selection. The AstrBot composition root injects TreeService but leaves the internal rollout switch off by default; there is no public configuration or schema change.
+9. After disclosure, assemble orders persona, impression, scene, detail, fact, and example content, applies the budget, and returns final_ids / dropped_ids.
 
 Source fallback recency compares absolute instants for offset-aware timestamps; naive timestamps retain local wall-time comparison in the runtime's timezone. Original Sources are not rewritten.
 
@@ -25,7 +26,7 @@ family=secret never enters the ordinary candidate pool. A memory with scope=shad
 
 ## Observability
 
-The returned info includes mode, candidate count, gate outcome, disclosure levels, fallback mode, final_ids, dropped_ids, and Source-fallback counters. Normal logs should contain only counts and IDs, never Source text or private assembled content.
+The returned info includes mode, candidate count, gate outcome, disclosure levels, fallback mode, final_ids, dropped_ids, Source-fallback counters, and, when enabled, content-free tree counts/rejections/fallback status. Normal logs should contain only counts and IDs, never Source text or private assembled content.
 
 ## Explicit interfaces and side effects
 
@@ -39,6 +40,7 @@ Legacy `build_block()` and `RecallService.build()` retain their parameters, retu
 |---|---|---|
 | `pipeline.py` | Candidate → scoring/filtering → disclosure → assembly; compatible write wrapper | Medium/high: coordinates existing rules, no duplicated query implementation |
 | `selection.py` | Config interpretation, speaker identity and recent-memory fallback | Low: pure rules, subject affinity is a ranking signal |
+| `tree_query.py` | Bounded, read-only, same-identity tree additions with current evidence and version checks | Medium: uses injected tree/store readers; never renders content |
 | `source_fallback.py` | Bounded evidence reads → current Artifact discovery | Medium: reads only, no raw Source body injected |
 | `disclosure.py` | Apply shared privacy decisions and safe wording overrides | Medium: one disclosure stage before rendering |
 | `context_recording.py`, `designated.py` | Explicit context inclusion records and existing private/trigger guards | Medium: versioned writes separate from queries |

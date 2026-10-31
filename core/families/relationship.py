@@ -6,7 +6,7 @@ import math
 from datetime import datetime
 from typing import Any
 
-from ..relationship import RELATIONSHIP_POLICY_VERSION, SUMMARY
+from ..domain.social.relationship import RELATIONSHIP_POLICY_VERSION, SUMMARY
 
 _V1_BANDS = ("close", "warm", "neutral", "low", "dislike")
 

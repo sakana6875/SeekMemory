@@ -16,8 +16,8 @@ try:
     )
     from .ports import ArtifactCache, ArtifactStore, SourceStore, PersonaModelFactory, ServiceJournal, ServiceLogger
     from ..app.ports import RelationshipEventStore
-    from ..core.bot_behavior import SELF_SUBJECT
-    from ..core.persona import PERSONA_SYNTHESIS_VERSION
+    from ..core.domain.character.bot_behavior import SELF_SUBJECT
+    from ..core.domain.character.persona import PERSONA_SYNTHESIS_VERSION
 except ImportError:  # Standalone root / 独立测试以仓库为导入根。
     from app.persona_synthesis import (
         PersonaEvidence,
@@ -26,8 +26,8 @@ except ImportError:  # Standalone root / 独立测试以仓库为导入根。
     )
     from services.ports import ArtifactCache, ArtifactStore, SourceStore, PersonaModelFactory, ServiceJournal, ServiceLogger
     from app.ports import RelationshipEventStore
-    from core.bot_behavior import SELF_SUBJECT
-    from core.persona import PERSONA_SYNTHESIS_VERSION
+    from core.domain.character.bot_behavior import SELF_SUBJECT
+    from core.domain.character.persona import PERSONA_SYNTHESIS_VERSION
 
 
 try:
@@ -104,9 +104,9 @@ class MaintenanceService:
     def _relationship_policy(self):
         """Build the relationship policy from normalized configuration weights / 按规范化后的配置权重构造关系规则。"""
         try:
-            from ..core.relationship_rules import RelationshipScoringPolicy
+            from ..core.domain.social.relationship_rules import RelationshipScoringPolicy
         except ImportError:
-            from core.relationship_rules import RelationshipScoringPolicy
+            from core.domain.social.relationship_rules import RelationshipScoringPolicy
         private_weight = self._relationship_weight(
             "relationship_private_weight", 1.0
         )
@@ -216,14 +216,14 @@ class MaintenanceService:
         try:
             from ..perceive.model import ProviderChatModel
             from ..perceive.relationship import verify_relationship
-            from ..core.relationship_rules import (
+            from ..core.domain.social.relationship_rules import (
                 ConversationScope, RelationshipCandidate, RelationshipReason,
                 RelationshipStrength, VERIFIER_VERSION,
             )
         except ImportError:  # Standalone tests use the repository as the import root.
             from perceive.model import ProviderChatModel
             from perceive.relationship import verify_relationship
-            from core.relationship_rules import (
+            from core.domain.social.relationship_rules import (
                 ConversationScope, RelationshipCandidate, RelationshipReason,
                 RelationshipStrength, VERIFIER_VERSION,
             )

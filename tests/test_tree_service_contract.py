@@ -60,6 +60,31 @@ class TreeServiceContractTest(unittest.TestCase):
                          [self.db.artifacts.get(art.header.id)
                           for art in self.tree.children(parent.header.id)])
 
+    def test_parent_and_ancestors_follow_existing_edges_without_writes(self) -> None:
+        root, middle, leaf = (self.memory(name) for name in ("root", "middle", "leaf"))
+        self.tree.add_under(root, ())
+        self.tree.add_under(middle, (root.header.id,))
+        self.tree.add_under(leaf, (middle.header.id,))
+        before = self.db.ledger.last_hash()
+        self.assertEqual(self.tree.parents(leaf.header.id), (middle.header.id,))
+        self.assertEqual(self.tree.ancestor_ids(leaf.header.id),
+                         (middle.header.id, root.header.id))
+        self.assertEqual(self.tree.ancestor_ids(leaf.header.id, max_depth=1),
+                         (middle.header.id,))
+        self.assertEqual(self.db.ledger.last_hash(), before)
+
+    def test_multiple_parent_edges_are_both_traversable_without_single_parent_write(self):
+        first, second, leaf = (self.memory(name) for name in ("first", "second", "leaf"))
+        self.tree.add_under(first, ())
+        self.tree.add_under(second, ())
+        self.tree.add_under(leaf, (first.header.id, second.header.id, first.header.id))
+        self.assertEqual(set(self.tree.parents(leaf.header.id)),
+                         {first.header.id, second.header.id})
+        self.assertEqual(set(self.tree.ancestor_ids(leaf.header.id)),
+                         {first.header.id, second.header.id})
+        self.assertEqual(self.db.conn.execute("SELECT parent FROM nodes WHERE id = ?",
+                                              (leaf.header.id,)).fetchone()["parent"], None)
+
     def test_impressions_fall_back_only_when_the_cache_level_is_empty(self) -> None:
         first, second = self.memory("first", "impression"), self.memory("second", "impression")
         for art in (first, second, self.memory("scene"),
@@ -79,7 +104,7 @@ class TreeServiceContractTest(unittest.TestCase):
         parent, child = self.memory("parent", "impression"), self.memory("child")
         self.save(parent)
 
-        self.assertIs(self.tree.add_under(child, parent.header.id), child)
+        self.assertIs(self.tree.add_under(child, (parent.header.id,)), child)
 
         self.assertEqual(self.db.artifacts.get(child.header.id), child)
         self.assertEqual(self.cache.get(child.header.id), child)
@@ -101,7 +126,7 @@ class TreeServiceContractTest(unittest.TestCase):
         self.cache.put(child)
         incoming = Artifact(child.header, {"text": "new", "level": "detail"})
 
-        self.assertIs(self.tree.add_under(incoming, None), incoming)
+        self.assertIs(self.tree.add_under(incoming, ()), incoming)
 
         stored = self.db.artifacts.get(child.header.id)
         self.assertEqual(stored.header.revision, 2)
@@ -119,7 +144,7 @@ class TreeServiceContractTest(unittest.TestCase):
         self.save(child)
         incoming = revise(child, {"text": "new", "level": "detail"})
 
-        self.assertIs(TreeService(self.db.artifacts).add_under(incoming, None), incoming)
+        self.assertIs(TreeService(self.db.artifacts).add_under(incoming, ()), incoming)
 
         self.assertEqual(self.db.artifacts.get(child.header.id), incoming)
         self.assertEqual(self.db.artifacts.edges_of(child.header.id), [])
@@ -129,12 +154,21 @@ class TreeServiceContractTest(unittest.TestCase):
         ledger_hash, cache_version = self.db.ledger.last_hash(), self.cache.version
 
         with self.assertRaisesRegex(ValueError, "own parent"):
-            self.tree.add_under(child, child.header.id)
+            self.tree.add_under(child, (child.header.id,))
 
         self.assertIsNone(self.db.artifacts.get(child.header.id))
         self.assertIsNone(self.cache.get(child.header.id))
         self.assertEqual(self.db.ledger.last_hash(), ledger_hash)
         self.assertEqual(self.cache.version, cache_version)
+
+    def test_cross_subject_parent_rejected_before_child_commit(self):
+        parent = self.memory("other", subject_id="someone_else")
+        child = self.memory("child", subject_id="u1")
+        self.save(parent)
+        with self.assertRaisesRegex(ValueError, "parent identity"):
+            self.tree.add_under(child, (parent.header.id,))
+        self.assertIsNone(self.db.artifacts.get(child.header.id))
+        self.assertEqual(self.tree.children(parent.header.id), [])
 
     def test_invalid_revision_leaves_storage_cache_and_relations_unchanged(self) -> None:
         parent, child = self.memory("parent", "impression"), self.memory("old")
@@ -145,7 +179,7 @@ class TreeServiceContractTest(unittest.TestCase):
         ledger_hash, cache_version = self.db.ledger.last_hash(), self.cache.version
 
         with self.assertRaises(VersionError):
-            self.tree.add_under(invalid, parent.header.id)
+            self.tree.add_under(invalid, (parent.header.id,))
 
         self.assertEqual(self.db.artifacts.get(child.header.id), child)
         self.assertEqual(self.cache.get(child.header.id), child)

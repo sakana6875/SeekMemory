@@ -24,14 +24,14 @@ try:
     )
     from .ports import ArtifactCache, ArtifactStore, ExtractionStore, SourceStore, PendingBuffer, ServiceJournal, ServiceLogger, ProviderFactory, ChatModel, LegacyTextModel
     from ..app.ports import RelationshipEventStore
-    from ..core.graph import Graph
-    from ..core.artifact import content_of, revise
-    from ..core.capacity import PROTECTIVE, SATURATED
+    from ..core.domain.memory.graph import Graph
+    from ..core.domain.memory.artifact import content_of, revise
+    from ..core.domain.operations.capacity import PROTECTIVE, SATURATED
     from ..maintain.impression import revise_impression
     from ..maintain.writer import MaintenanceWriter
     from ..maintain.link import link_new
     from ..perceive.absorb import ExtractionPlan, build_plan, dialogue_of, recover_parents, worth_now
-    from ..core.relationship_rules import VERIFIER_VERSION, relationship_event_id
+    from ..core.domain.social.relationship_rules import VERIFIER_VERSION, relationship_event_id
     from ..perceive.extract import build_prompt
     from ..perceive.importance import (
         MIN_IMPORTANCE_SCORE,
@@ -51,14 +51,14 @@ except ImportError:
     )
     from services.ports import ArtifactCache, ArtifactStore, ExtractionStore, SourceStore, PendingBuffer, ServiceJournal, ServiceLogger, ProviderFactory, ChatModel, LegacyTextModel
     from app.ports import RelationshipEventStore
-    from core.graph import Graph
-    from core.artifact import content_of, revise
-    from core.capacity import PROTECTIVE, SATURATED
+    from core.domain.memory.graph import Graph
+    from core.domain.memory.artifact import content_of, revise
+    from core.domain.operations.capacity import PROTECTIVE, SATURATED
     from maintain.impression import revise_impression
     from maintain.writer import MaintenanceWriter
     from maintain.link import link_new
     from perceive.absorb import ExtractionPlan, build_plan, dialogue_of, recover_parents, worth_now
-    from core.relationship_rules import VERIFIER_VERSION, relationship_event_id
+    from core.domain.social.relationship_rules import VERIFIER_VERSION, relationship_event_id
     from perceive.extract import build_prompt
     from perceive.importance import (
         MIN_IMPORTANCE_SCORE,

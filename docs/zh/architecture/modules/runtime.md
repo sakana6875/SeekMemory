@@ -39,9 +39,11 @@ runtime_gate_enabled 默认 false。关闭时，等待和后台 deferred dispatc
 
 RunRecorder 是 Source、pending projection、checkpoint 和 episode 的唯一运行时写回协调者，以 run_id 和确定性 Source ID 防止重复回调重复写入。runtime_episodes 是追加式业务审计元数据；RunTracer/TraceStore 是受字段白名单约束的诊断时间线。二者不保存对话正文，不互相替代。
 
+用户消息的已完成回执与待补偿写入都以现有 Source ID 为内部键，保留会话、说话人及正文的身份边界。不同会话可复用 event_id；同一消息重放不会重复写入。对外 turn_id 仍保留原 event_id（缺失时使用 Source ID）。
+
 ### 运行轨迹事件边界
 
-`app/runtime/tracing.py` 的 RunTracer 是宿主无关生产者，事件仅需要 get_extra/set_extra 关联状态；`core/trace.py` 拥有字段清理与运行投影，`store/run_trace.py` 拥有 JSONL 持久化。管理查询消费同一快照，见 [WebUI](webui.md#运行轨迹查询)。
+`app/runtime/tracing.py` 的 RunTracer 是宿主无关生产者，事件仅需要 get_extra/set_extra 关联状态；`core/domain/operations/trace.py` 拥有字段清理与运行投影，`store/run_trace.py` 拥有 JSONL 持久化。管理查询消费同一快照，见 [WebUI](webui.md#运行轨迹查询)。
 
 | 事件 | 记录时机 |
 |---|---|
@@ -72,3 +74,7 @@ RunRecorder 保留原始消息、投影及逐条强化的完成位置，失败�
 文件审计补偿以原有 `session_id/run_id` 字段识别完整已保存行；追加结果不确定时重新读取已保存编号，防止再次追加。此去重仅覆盖同实例及重建实例后的完整行，不是跨进程文件锁，也不增加文件字段。
 
 记忆上下文构造使用纯 `RecallService.query()`。明确包含记录通过可选通用 `MemoryContextRecorder` 转发；普通宿主钩子在附加到请求后调用，后台在模型调用前立即调用。运行时不包含指定记忆规则；旧 `RecallService.build()` 仍是兼容的查询加记录入口。
+
+现有注意力与主动选择策略分别由 `app/runtime/policy/attention.py`、`proactive.py` 维护；旧 `app.runtime.attention`、`proactive` 导入保留为同一模块对象的兼容入口。工具策略暂留 `app/runtime/tools.py`，因为它还包含宿主形状的过滤入口；`contracts/` 仍声明数据和端口，`runtime.py`、`dispatch.py`、`actions.py` 等仍负责执行与副作用。本次仅移动文件，不改变策略、调度或中断语义。
+
+`app/runtime/contracts/context.py` 定义 `MemoryContextRequest` 和 `MemoryContext` 数据契约；`app/runtime/port/capabilities.py` 声明此前位于 `contracts/ports.py` 的外部能力协议（时钟、模型、记忆、发送与仓储等）。旧 `contracts/ports.py` 只转发同一对象以保留导入路径；原本与状态和动作 DTO 紧邻的 `SessionStateStore`、`ActionPort` 等协议暂留各自契约文件，不为目录整齐而改变声明所有权。

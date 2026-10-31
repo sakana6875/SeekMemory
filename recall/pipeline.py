@@ -11,15 +11,15 @@ from typing import Any
 
 try:  # Plugin namespace / 插件命名空间。
     from ..app.ports import ArtifactCache, ArtifactStore, Retriever, SourceStore
-    from ..core.disclosure import (
+    from ..core.domain.memory.disclosure import (
         DisclosureLevel,
         RecallScene,
         decide,
         safe_text,
         scope_prior,
     )
-    from ..core.graph import Graph
-    from ..core.bot_behavior import trusted_self_persona
+    from ..core.domain.memory.graph import Graph
+    from ..core.domain.character.bot_behavior import trusted_self_persona
     from ..recall.assemble import build_with_meta as assemble_text_meta
     from ..recall.designated import deliverable, mark_given, current_heads
     from ..recall.drift import best_of as drift_best
@@ -31,18 +31,19 @@ try:  # Plugin namespace / 插件命名空间。
     from ..recall.scope import visible
     from ..recall.temporal import filter_valid, in_window, query_window
     from ..recall.score import select
+    from ..recall.tree_query import LegacyTreeGap, TreeLookup, TreeQueryLimits, expand_tree
     from ..recall.source_query import query_recent
 except ImportError:  # Top-level package / 顶层包。
     from app.ports import ArtifactCache, ArtifactStore, Retriever, SourceStore
-    from core.disclosure import (
+    from core.domain.memory.disclosure import (
         DisclosureLevel,
         RecallScene,
         decide,
         safe_text,
         scope_prior,
     )
-    from core.graph import Graph
-    from core.bot_behavior import trusted_self_persona
+    from core.domain.memory.graph import Graph
+    from core.domain.character.bot_behavior import trusted_self_persona
 
     from recall.assemble import build_with_meta as assemble_text_meta
     from recall.designated import deliverable, mark_given, current_heads
@@ -55,6 +56,7 @@ except ImportError:  # Top-level package / 顶层包。
     from recall.scope import visible
     from recall.temporal import filter_valid, in_window, query_window
     from recall.score import select
+    from recall.tree_query import LegacyTreeGap, TreeLookup, TreeQueryLimits, expand_tree
     from recall.source_query import query_recent
 
 Conf = Callable[[str, Any], Any]
@@ -80,6 +82,8 @@ def query_block(
     log: Callable[[str], None] = lambda _msg: None,
     *,
     hybrid_retriever: Retriever | None = None,
+    tree: TreeLookup | None = None,
+    tree_enabled: bool = False,
 ) -> tuple[str, dict]:
     """Read candidates, rank, disclose and assemble context without memory writes / 读取候选、排序、披露并组装上下文，不写入记忆。"""
     lookup = sources.source_umo
@@ -187,6 +191,31 @@ def query_block(
         lookup=lookup, window=window, log=log,
     ) if source_enabled else None
 
+    tree_info = None
+    if tree_enabled and tree is not None and picked:
+        original = list(picked)
+        try:
+            # Structural additions are drawn only from the eligible pool.
+            # 结构补充仅从已通过召回资格检查的候选池读取。
+            limit = max(0, int(conf("recall_k", 8)))
+            capacity = max(0, limit - len(original))
+            result = expand_tree(original, pool, tree, artifacts, sources,
+                                 TreeQueryLimits(total=min(8, capacity)), text=text,
+                                 signals={c.artifact.header.id: (c.activation, c.lexical)
+                                          for c in candidates})
+            by_id = {art.header.id: art for art in pool}
+            picked = original[:limit] + [by_id[node_id] for node_id in result.ids
+                                          if node_id in by_id][:capacity]
+            tree_info = result.info()
+            tree_info["status"] = "ok"
+        except LegacyTreeGap:
+            picked = original
+            tree_info = {"status": "fallback", "expanded": 0,
+                         "rejected": {"legacy_parent_only": 1}}
+        except Exception:  # noqa: BLE001 - Optional tree failure falls back to flat recall.
+            picked = original
+            tree_info = {"status": "fallback", "expanded": 0, "rejected": {"tree_error": 1}}
+
     safe_pinned = apply_disclosure(pinned_arts, 1.0)
     safe_designated = apply_disclosure(designated, 1.0)
     safe_picked = apply_disclosure(
@@ -231,6 +260,8 @@ def query_block(
         "candidates": len(candidates),
         "gate": gate_info,
     }
+    if tree_info is not None:
+        info["tree"] = tree_info
     if source_info is not None:
         info["source_recall"] = source_info
     return block, info

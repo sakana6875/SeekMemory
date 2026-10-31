@@ -4,12 +4,12 @@ from __future__ import annotations
 
 try:
     from ..app.ports import ArtifactCache
-    from ..core.artifact import validate
-    from ..core.relationship import RelationshipSnapshot, snapshot_from_payload
+    from ..core.domain.memory.artifact import validate
+    from ..core.domain.social.relationship import RelationshipSnapshot, snapshot_from_payload
 except ImportError:
     from app.ports import ArtifactCache
-    from core.artifact import validate
-    from core.relationship import RelationshipSnapshot, snapshot_from_payload
+    from core.domain.memory.artifact import validate
+    from core.domain.social.relationship import RelationshipSnapshot, snapshot_from_payload
 
 
 class RelationshipReader:

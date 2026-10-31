@@ -38,8 +38,8 @@ from ...app.runtime import (
     ToolPolicy,
 )
 from ...app.runtime.tracing import RunTracer
-from ...core.capacity import CapacityGovernor, CapacityThresholds, load_thresholds
-from ...core.graph import Graph
+from ...core.domain.operations.capacity import CapacityGovernor, CapacityThresholds, load_thresholds
+from ...core.domain.memory.graph import Graph
 from ...services import (
     AccessPolicy,
     AccessService,
@@ -174,6 +174,8 @@ class AstrBotPlugin(star.Star):
             config=self._c,
             owner_umo=lambda: self.owner_umo,
             hybrid_retriever=self.hybrid_retriever,
+            tree=self.tree,
+            tree_enabled=False,  # Internal rollout: preserve flat recall until comparison.
             log=lambda msg: logger.info(f"[seekmemory] {msg}"),
         )
         management = ManagementService(
